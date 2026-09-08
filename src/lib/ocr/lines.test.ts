@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeOcrLine, normalizeOcrLines } from './lines'
+import { normalizeOcrLine } from './lines'
 
 describe('normalizeOcrLine', () => {
   // 実際に架空の名刺を読ませて出た形（開発サーバで実測）
@@ -41,17 +41,5 @@ describe('normalizeOcrLine', () => {
 
   it('長音符や中黒だけの行も落ちない', () => {
     expect(normalizeOcrLine('ー ・ ー')).toBe('ー・ー')
-  })
-})
-
-describe('normalizeOcrLines', () => {
-  it('整えつつ空行を落とす', () => {
-    expect(
-      normalizeOcrLines([
-        { text: '株 式 会 社 サ ンプ ル' },
-        { text: '   ' },
-        { text: 'TEL 03-1234-5678' },
-      ]),
-    ).toEqual(['株式会社サンプル', 'TEL 03-1234-5678'])
   })
 })

@@ -80,6 +80,13 @@ function ImageSlot({ side, image, reading, disabled, progress, onFile, onClear }
         ) : null}
       </div>
 
+      {/* 裏の読み取りは何も起きないように見えるので、どこへ行くのかを先に言っておく */}
+      {side === 'back' ? (
+        <p className="mt-1 text-meta text-ink-faint">
+          裏の文字はフォームには入れず、あとで見返せるように名刺の記録に残します。
+        </p>
+      ) : null}
+
       {image ? (
         <img
           src={image.previewUrl}

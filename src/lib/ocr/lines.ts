@@ -28,8 +28,3 @@ export function normalizeOcrLine(line: string): string {
   // 過半数が 1 文字なら、文字単位にばらけた誤検出とみなして詰める
   return singles * 2 > tokens.length ? tokens.join('') : collapsed
 }
-
-/** 空行を落としつつ整える */
-export function normalizeOcrLines(lines: readonly { text: string }[]): string[] {
-  return lines.map((line) => normalizeOcrLine(line.text)).filter((text) => text.length > 0)
-}

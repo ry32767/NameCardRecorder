@@ -297,6 +297,11 @@ describe('登録画面 / 画像の取り込み', () => {
     renderPage()
     expect(screen.getByText('（任意）')).toBeInTheDocument()
   })
+
+  it('裏の読み取り結果がどこへ行くのかを説明している', () => {
+    renderPage()
+    expect(screen.getByText(/裏の文字はフォームには入れず/)).toBeInTheDocument()
+  })
 })
 
 describe('登録画面 / OCR 実行中', () => {
