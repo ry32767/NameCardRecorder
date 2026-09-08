@@ -2,6 +2,8 @@
 
 > もらった名刺をスマホで撮るだけで、GitHub の Issues に台帳として貯まっていく名刺管理アプリ。
 
+**公開先: https://ry32767.github.io/NameCardRecorder/**
+
 名刺の山を管理するのに、専用サービスに個人情報を預けたくない。かといって Excel に手入力するのは続かない。
 NameCardRecorder は、名刺を撮影 → 文字認識 → 内容を確認して保存、という流れを 30 秒で終わらせ、その結果を**自分の private リポジトリの Issue** として残す。検索も履歴もラベルも GitHub がそのまま使える。
 
@@ -106,7 +108,7 @@ npm run preview     # ビルド結果の確認
 
 ### 4. GitHub Pages に公開する
 
-このリポジトリの Settings → Pages で **Source を「GitHub Actions」**にする。
+このリポジトリの Settings → Pages で **Source を「GitHub Actions」**にする（設定済み）。
 `main` に push すると `.github/workflows/deploy.yml` が Lint・型・テスト・ビルドを回してから公開する。
 
 ## 使い方
