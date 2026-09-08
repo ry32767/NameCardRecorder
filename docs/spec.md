@@ -197,6 +197,10 @@ flowchart LR
 | 公開 URL での動作 | GitHub Pages にデプロイし、https://ry32767.github.io/NameCardRecorder/ をブラウザで確認。アセットが `/NameCardRecorder/` 配下から読めること、`#/cards/1` の直リンクが 404 にならず設定画面へ誘導されること、コンソールエラーが無いことを確認 |
 | CI | GitHub Actions で Lint・型・テスト・ビルドが通ってからデプロイされることを実際の run で確認 |
 
+データリポジトリ **`ry32767/namecard-data`（private）は作成済み**（`main` ブランチあり）。
+残りの未確認項目は、**Fine-grained PAT を発行して設定画面に入力すれば一通り確認できる**状態です。
+トークンの発行・入力は利用者本人の操作が必要なので、ここまでで止めてあります。
+
 **未確認（実機・実物が要るもの）：**
 
 - カメラ起動、スマホ縦持ち写真の EXIF 向き補正
