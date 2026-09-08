@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* iOS で入力欄にフォーカスしたとき本文まで拡大されないようにする */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-paper text-ink font-sans text-base antialiased;
+    /* ノッチ・ホームバーにコンテンツがかからないようにする */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  /* フォーカスリングは消さずに、トークンの藍で統一する（DESIGN.md 不変条件 9） */
+  :focus-visible {
+    @apply outline-none ring-2 ring-indigo ring-offset-2 ring-offset-paper;
+  }
+
+  /* 長いメールアドレス・URL が 375px で横スクロールを作らないようにする */
+  a,
+  p,
+  dd {
+    overflow-wrap: anywhere;
+  }
+}
+
+@layer components {
+  /* 名刺の小口帯。会社ごとの色は inline style ではなく data 属性 + トークンで当てる */
+  .edge-bar {
+    @apply absolute inset-y-0 left-0 w-1 rounded-l-card;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

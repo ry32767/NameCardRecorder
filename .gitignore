@@ -1,0 +1,18 @@
+node_modules
+dist
+dist-ssr
+coverage
+*.local
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# 名刺データ・画像は絶対にこのリポジトリへ入れない（AGENTS.md の Do NOT）
+cards/
+*.jpg
+*.jpeg
+*.png
+*.heic
+!public/**/*.png
+!public/**/*.svg
