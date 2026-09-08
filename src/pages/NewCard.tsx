@@ -138,6 +138,12 @@ export function NewCard({
     const previous = imagesRef.current[target]
     if (previous) URL.revokeObjectURL(previous.previewUrl)
     setImages((prev) => ({ ...prev, [target]: prepared }))
+    // 前の画像の読み取り結果をここで捨てる。残すと、新しい画像の上に古い座標で
+    // 文字が重なり、読み取りに失敗した場合は古い生テキストのまま登録されてしまう
+    setOverlays((prev) => ({ ...prev, [target]: [] }))
+    setFields((current) =>
+      target === 'front' ? { ...current, ocrText: '' } : { ...current, ocrTextBack: '' },
+    )
     setSide(target)
     setReadingSide(target)
 

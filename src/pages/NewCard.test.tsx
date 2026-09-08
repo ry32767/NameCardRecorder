@@ -645,3 +645,45 @@ describe('登録画面 / Cloud Vision', () => {
     expect(screen.getByRole('button', { name: 'この内容で登録' })).toBeEnabled()
   })
 })
+
+describe('登録画面 / 画像を選び直したとき', () => {
+  const LINES = [{ text: '株式会社サンプル', bbox: { x0: 60, y0: 80, x1: 500, y1: 130 } }]
+
+  it('前の画像の読み取り結果を残さない', async () => {
+    const pending: { resolve?: () => void } = {}
+    let call = 0
+    const provider = {
+      recognize: () => {
+        call += 1
+        if (call === 1) return Promise.resolve({ text: '株式会社サンプル', lines: LINES })
+        // 2 枚目は読み取り中のまま止める（この間に古い結果が残らないことを見る）
+        return new Promise<{ text: string; lines: typeof LINES }>((resolve) => {
+          pending.resolve = () => resolve({ text: '', lines: [] })
+        })
+      },
+      terminate: () => Promise.resolve(),
+    }
+
+    clearBranchCache()
+    renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={provider} />, {
+      settings: TEST_SETTINGS,
+    })
+
+    const pick = (name: string) =>
+      fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
+        target: { files: [new File(['fake'], name, { type: 'image/jpeg' })] },
+      })
+
+    pick('first.jpg')
+    await screen.findByRole('button', { name: '株式会社サンプル をコピー' })
+
+    pick('second.jpg')
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: '株式会社サンプル をコピー' }),
+      ).not.toBeInTheDocument()
+    })
+    pending.resolve?.()
+  })
+})

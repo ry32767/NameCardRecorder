@@ -66,10 +66,11 @@ export function ImagePicker({
           : '裏の文字はフォームには入れず、あとで見返せるように名刺の記録に残します。'}
       </p>
 
-      {/* 画像そのものを押すと裏返る。文字の上を押したときはコピーが優先される */}
+      {/* 画像そのものを押すと裏返る（文字の上はコピーが優先）。
+          読み取り中に裏返すと進捗が見えなくなるので、ボタン側と揃えて止める */}
       <div
         className="relative mt-3 overflow-hidden rounded-card border border-rule"
-        onClick={onFlip}
+        onClick={reading ? undefined : onFlip}
         title={`押すと${SIDE_LABELS[otherSide(side)]}に切り替わります`}
       >
         {image ? (
