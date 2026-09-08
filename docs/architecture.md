@@ -310,6 +310,11 @@ Issue 本文の `ocrText` には**生テキストをそのまま**残す（後�
 
 ### Cloud Vision（任意・API キーがあるときだけ）
 
+> **リファラー制限はオリジンで書く。** ブラウザが付ける `Referer` は、既定の Referrer-Policy
+> （`strict-origin-when-cross-origin`）ではオリジンまで（`https://ry32767.github.io/`）で、
+> パスもハッシュも送られない。`https://ry32767.github.io/NameCardRecorder/*` のように
+> パスを含めて制限すると一致せず 403（`API_KEY_HTTP_REFERRER_BLOCKED`）になる。
+
 `https://vision.googleapis.com/v1/images:annotate?key=…` に `DOCUMENT_TEXT_DETECTION` で 1 回 POST する。
 実装は `src/lib/ocr/vision.ts`。
 
@@ -318,8 +323,13 @@ Issue 本文の `ocrText` には**生テキストをそのまま**残す（後�
 - 返ってくるのは ページ → ブロック → 段落 → 単語 → 文字 の階層。段落をそのまま 1 行にすると
   複数行が繋がるので、**文字ごとの `detectedBreak` が改行のところで行を切る**。
   行の bbox は含まれる単語の頂点の外接矩形（頂点は軸平行とは限らず、値が 0 の座標はキーごと省略される）。
-- 400/401 → キーが不正、403 → 拒否（API 未有効化・キー制限・課金）、429 → 上限、として
-  **理由の分かる日本語**にして画面に出す。キーは例外メッセージにも URL ログにも入れない。
+- 失敗の本文には Google 自身の理由が入っている（`error.details[].reason`）。
+  `SERVICE_DISABLED` / `API_KEY_HTTP_REFERRER_BLOCKED` / `API_KEY_SERVICE_BLOCKED` / `BILLING_DISABLED` …
+  を**次に何をすればいいかが分かる日本語**に翻訳して画面に出す（`VISION_REASON_MESSAGES`）。
+  知らない理由なら**Google の原文をそのまま添える**。ここを潰すと切り分けができなくなる
+  （実際に 403 が出たとき、まとめた文言では原因に辿り着けなかった）。
+- 200 でも画像ごとに `responses[0].error` が入ることがあるので、そちらも同じ経路で見せる。
+- キーは例外メッセージにも URL ログにも入れない。
 - 失敗しても手入力で登録できる状態は保つ（OCR は補助であって必須ではない）。
 
 `OcrProvider` の実装が 2 つになっただけなので、呼び出し側（`src/pages/NewCard.tsx`）は

@@ -19,6 +19,30 @@ export const VISION_QUOTA_MESSAGE = 'Cloud Vision の利用上限に達しまし
 export const VISION_NETWORK_MESSAGE = 'Cloud Vision に接続できませんでした'
 export const VISION_FAILED_MESSAGE = 'Cloud Vision で読み取れませんでした'
 
+/**
+ * Google が返す `error.details[].reason` ごとの、**次に何をすればいいか**が分かる文言。
+ *
+ * 403 をひとまとめに「拒否されました」と出していたら、実際に詰まったときに
+ * 原因が分からなかった。理由コードは Google 側が返してくれているので、そのまま活かす。
+ */
+export const VISION_REASON_MESSAGES: Record<string, string> = {
+  SERVICE_DISABLED:
+    'この Google Cloud プロジェクトで Cloud Vision API が有効になっていません。API を有効化してください',
+  // 画面にそのまま出る文言なので Markdown 記法は使わない（Notice は素のテキストを描く）
+  API_KEY_HTTP_REFERRER_BLOCKED:
+    'API キーのリファラー制限がこの URL を許していません。ブラウザが送るのはオリジンだけ（例: https://ry32767.github.io/）でパスは落ちるので、制限にはパスを含めず「https://ry32767.github.io/*」の形で登録してください。開発中は「http://localhost:5173/*」も必要です',
+  API_KEY_SERVICE_BLOCKED:
+    'API キーの「API の制限」に Cloud Vision API が入っていません。対象に追加してください',
+  API_KEY_IP_ADDRESS_BLOCKED: 'API キーの IP 制限がこの端末を許していません',
+  API_KEY_ANDROID_APP_BLOCKED: 'API キーの制限がアプリ用になっています。HTTP リファラー制限に変えてください',
+  API_KEY_IOS_APP_BLOCKED: 'API キーの制限がアプリ用になっています。HTTP リファラー制限に変えてください',
+  API_KEY_INVALID: VISION_KEY_INVALID_MESSAGE,
+  BILLING_DISABLED:
+    'この Google Cloud プロジェクトで課金が有効になっていません。請求先アカウントを紐づけてください',
+  ACCOUNT_STATE_INVALID: 'Google Cloud アカウントの状態を確認してください（支払いの停止など）',
+  RATE_LIMIT_EXCEEDED: VISION_QUOTA_MESSAGE,
+}
+
 export class VisionOcrError extends Error {
   constructor(message: string) {
     super(message)
@@ -58,11 +82,18 @@ export class GoogleVisionOcrProvider implements OcrProvider {
 
     onProgress?.({ progress: 0.8, status: 'recognizing text' })
 
-    if (!response.ok) throw new VisionOcrError(messageForStatus(response.status))
+    // 失敗の本文には Google 自身の理由が入っている。読み捨てると切り分けができない
+    const payload = (await response.json().catch(() => null)) as VisionAnnotateResponse | null
 
-    const payload = (await response.json()) as VisionAnnotateResponse
-    const result = payload.responses?.[0]
-    if (!result || result.error) throw new VisionOcrError(VISION_FAILED_MESSAGE)
+    if (!response.ok) {
+      throw new VisionOcrError(explain(payload?.error, messageForStatus(response.status)))
+    }
+
+    const result = payload?.responses?.[0]
+    // 200 でも画像ごとに error が入ることがある（画像が大きすぎる、など）
+    if (!result || result.error) {
+      throw new VisionOcrError(explain(result?.error, VISION_FAILED_MESSAGE))
+    }
 
     onProgress?.({ progress: 1, status: 'done' })
 
@@ -75,6 +106,24 @@ export class GoogleVisionOcrProvider implements OcrProvider {
   async terminate(): Promise<void> {
     // 常駐するものが無い（Worker を持つ Tesseract 実装との差はここだけ）
   }
+}
+
+/**
+ * Google のエラーを、こちらの文言に翻訳する。
+ * 理由コードが分かればそれを使い、分からなければ**Google の原文をそのまま添える**
+ * （こちらで潰してしまうと、次に何をすればいいか分からなくなる）。
+ */
+function explain(error: VisionError | undefined, fallback: string): string {
+  if (!error) return fallback
+
+  for (const detail of error.details ?? []) {
+    const known = detail.reason ? VISION_REASON_MESSAGES[detail.reason] : undefined
+    if (known) return known
+  }
+  const known = error.status ? VISION_REASON_MESSAGES[error.status] : undefined
+  if (known) return known
+
+  return error.message ? `${fallback}（Google からの応答: ${error.message}）` : fallback
 }
 
 function messageForStatus(status: number): string {
@@ -100,9 +149,19 @@ interface VisionWord {
   boundingBox?: { vertices?: VisionVertex[] }
 }
 
+interface VisionError {
+  code?: number
+  message?: string
+  status?: string
+  details?: { reason?: string }[]
+}
+
 interface VisionAnnotateResponse {
+  /** リクエスト全体が弾かれたとき（キー・API 有効化・課金など） */
+  error?: VisionError
   responses?: {
-    error?: { code?: number; message?: string }
+    /** 画像ごとの失敗 */
+    error?: VisionError
     fullTextAnnotation?: VisionTextAnnotation
   }[]
 }

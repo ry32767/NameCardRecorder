@@ -161,3 +161,52 @@ describe('GoogleVisionOcrProvider', () => {
     )
   })
 })
+
+describe('失敗したときに理由を伝える', () => {
+  const image = new Blob(['fake'], { type: 'image/jpeg' })
+
+  /** Google が実際に返す形（403 のとき details に reason が入る） */
+  function denied(reason: string) {
+    return {
+      error: {
+        code: 403,
+        message: 'Requests from referer <empty> are blocked.',
+        status: 'PERMISSION_DENIED',
+        details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason }],
+      },
+    }
+  }
+
+  it.each([
+    ['SERVICE_DISABLED', /Cloud Vision API が有効になっていません/],
+    ['API_KEY_HTTP_REFERRER_BLOCKED', /リファラー制限/],
+    ['API_KEY_SERVICE_BLOCKED', /API の制限/],
+    ['BILLING_DISABLED', /課金が有効になっていません/],
+  ])('%s のときは次に何をすればいいかを出す', async (reason, expected) => {
+    server.use(visionResponse(denied(reason), 403))
+    await expect(new GoogleVisionOcrProvider('test-key').recognize(image)).rejects.toThrow(expected)
+  })
+
+  it('知らない理由なら Google の原文を添える', async () => {
+    server.use(
+      visionResponse({ error: { code: 403, message: 'Something new happened.' } }, 403),
+    )
+    await expect(new GoogleVisionOcrProvider('test-key').recognize(image)).rejects.toThrow(
+      /Something new happened\./,
+    )
+  })
+
+  it('200 でも画像ごとのエラーがあれば理由を出す', async () => {
+    server.use(visionResponse({ responses: [{ error: { message: 'Image too large.' } }] }))
+    await expect(new GoogleVisionOcrProvider('test-key').recognize(image)).rejects.toThrow(
+      /Image too large\./,
+    )
+  })
+
+  it('本文が JSON でなくても落ちず、状態から判断した文言を出す', async () => {
+    server.use(http.post(ENDPOINT, () => new HttpResponse('<html>500</html>', { status: 403 })))
+    await expect(new GoogleVisionOcrProvider('test-key').recognize(image)).rejects.toThrow(
+      VISION_KEY_DENIED_MESSAGE,
+    )
+  })
+})

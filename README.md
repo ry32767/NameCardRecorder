@@ -93,8 +93,12 @@ Google Cloud Vision を使える。
 
 1. Google Cloud でプロジェクトを作り、**Cloud Vision API を有効化**して課金を設定する
 2. API キーを発行し、**キーの制限**を掛ける
-   - アプリケーションの制限: **HTTP リファラー**に公開 URL（例: `https://<user>.github.io/NameCardRecorder/*`）
+   - アプリケーションの制限: **HTTP リファラー**に `https://<user>.github.io/*`（開発中は `http://localhost:5173/*` も足す）
    - API の制限: **Cloud Vision API だけ**
+
+   > **パスを含めないこと。** ブラウザが外部への `fetch` に付ける `Referer` は、既定の Referrer-Policy
+   > （`strict-origin-when-cross-origin`）では**オリジンだけ**（`https://<user>.github.io/`）になり、
+   > `/NameCardRecorder/` の部分は送られない。パス付きで制限すると一致せず 403 になる。
 3. アプリの設定画面「文字認識（OCR）」にキーを貼って保存する
 
 > **注意**: このキーを設定している間、**名刺の画像は Google に送信される**（既定では端末から出ない）。

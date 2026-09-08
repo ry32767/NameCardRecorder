@@ -237,9 +237,11 @@ export function Settings() {
                   className="min-h-tap w-full rounded-control border border-rule-strong bg-card px-3 py-2 font-mono text-base text-ink placeholder:text-ink-faint"
                 />
                 <p className="mt-1 text-meta text-ink-faint">
-                  Google Cloud で Cloud Vision API を有効にして発行したキーを貼り、「保存」を押してください。
-                  キーはブラウザから送るため URL に載ります。Google Cloud
-                  側でこのアプリのドメインに <strong className="font-bold text-ink">HTTP リファラー制限</strong>{' '}
+                  Google Cloud で Cloud Vision API を有効にし、課金を設定して発行したキーを貼り、「保存」を押してください。
+                  キーはブラウザから送るため URL に載ります。Google Cloud 側で
+                  <strong className="font-bold text-ink">HTTP リファラー制限</strong>
+                  （<span className="font-mono">https://ry32767.github.io/*</span>
+                  のように<strong className="font-bold text-ink">パスを含めない</strong>形。ブラウザはオリジンまでしか送りません）
                   を掛け、用途を Cloud Vision API だけに絞ってください。空のままなら Cloud Vision は使いません。
                 </p>
               </>
