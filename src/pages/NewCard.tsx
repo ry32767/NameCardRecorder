@@ -6,9 +6,8 @@ import { CardForm } from '../components/CardForm'
 import { ImagePicker } from '../components/ImagePicker'
 import { SIDE_LABELS } from '../lib/cardSide'
 import { Notice } from '../components/Notice'
-import { OcrTextPanel } from '../components/OcrTextPanel'
 import { ImageLoadError, prepareImage } from '../lib/ocr/image'
-import { normalizeOcrLines } from '../lib/ocr/lines'
+import { parseOcrLines } from '../lib/ocr/parser'
 import { createCard } from '../lib/github/createCard'
 import { emptyCardFields } from '../lib/card/types'
 import { hasErrors, todayIso, validateCard } from '../lib/card/validate'
@@ -22,7 +21,6 @@ import type { OcrProvider } from '../lib/ocr/types'
 type SideMap<T> = Record<CardSide, T>
 
 const NO_SIDES: SideMap<null> = { front: null, back: null }
-const NO_LINES: SideMap<string[]> = { front: [], back: [] }
 
 export function NewCard({
   onCreated,
@@ -44,7 +42,6 @@ export function NewCard({
   const [readingSide, setReadingSide] = useState<CardSide | null>(null)
   const [progress, setProgress] = useState(0)
   const [images, setImages] = useState<SideMap<PreparedImage | null>>(NO_SIDES)
-  const [ocrLines, setOcrLines] = useState<SideMap<string[]>>(NO_LINES)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
 
   const providerRef = useRef<OcrProvider | null>(ocrProvider ?? null)
@@ -84,7 +81,9 @@ export function NewCard({
     const current = imagesRef.current[side]
     if (current) URL.revokeObjectURL(current.previewUrl)
     setImages((prev) => ({ ...prev, [side]: null }))
-    setOcrLines((prev) => ({ ...prev, [side]: [] }))
+    setFields((current) =>
+      side === 'front' ? { ...current, ocrText: '' } : { ...current, ocrTextBack: '' },
+    )
   }
 
   async function handleFile(side: CardSide, file: File | undefined) {
@@ -118,13 +117,11 @@ export function NewCard({
         setProgress(Math.round(update.progress * 100))
       })
 
-      // どの欄に入れるかは推測せず、読めた行を並べてコピーさせる。
-      // 表示・コピー用だけ空白を整える（Issue 本文には生テキストをそのまま残す）
-      const lines = normalizeOcrLines(result.lines)
-      setOcrLines((prev) => ({ ...prev, [side]: lines }))
+      // 項目の振り分けは表だけから行う。裏は連絡先の続きや英語表記のことが多く、
+      // ここから埋めると表の正しい値を上書きしかねないので、生テキストだけ残す。
       setFields((current) =>
         side === 'front'
-          ? { ...current, ocrText: result.text }
+          ? { ...current, ...parseOcrLines(result.lines), ocrText: result.text }
           : { ...current, ocrTextBack: result.text },
       )
     } catch {
@@ -190,19 +187,10 @@ export function NewCard({
           </div>
         ) : null}
 
-        <div className="mt-4">
-          <OcrTextPanel
-            sections={[
-              { label: SIDE_LABELS.front, lines: ocrLines.front },
-              { label: SIDE_LABELS.back, lines: ocrLines.back },
-            ]}
-          />
-        </div>
-
         <section className="mt-4 space-y-4 rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
           <h2 className="text-title font-bold text-ink">名刺の内容</h2>
           <p className="text-meta text-ink-faint">
-            上の「読み取った文字」から貼り付けるか、直接入力してください。
+            表の画像から自動で埋めた候補です。読み取りは完璧ではないので、必ず目で確かめて直してください。
           </p>
 
           <CardForm fields={fields} errors={errors} onChange={update} />

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildSearchIndex, collectFacets, filterCards, normalizeForSearch } from './search'
+import { sortCardsBy } from './sort'
 import { emptyCardFields } from './card/types'
 import type { Card } from './card/types'
 
@@ -171,9 +172,10 @@ describe('性能', () => {
     const manyIndex = buildSearchIndex(many)
 
     const start = performance.now()
-    // 1 文字ずつ打った場合を模して複数回まわす
+    // 1 文字ずつ打った場合を模して複数回まわす。
+    // 一覧は絞り込みのあとに必ず並べ替えるので、受け入れ条件の 1 秒には並べ替えも含める
     for (const query of ['さ', 'さん', 'さんぷ', 'さんぷる', 'さんぷる た']) {
-      filterCards(manyIndex, { query })
+      sortCardsBy(filterCards(manyIndex, { query }), 'name')
     }
     const elapsed = performance.now() - start
 

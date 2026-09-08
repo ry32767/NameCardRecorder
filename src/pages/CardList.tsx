@@ -4,8 +4,10 @@ import { AppHeader } from '../components/AppHeader'
 import { CardTile } from '../components/CardTile'
 import { Notice } from '../components/Notice'
 import { buildSearchIndex, collectFacets, filterCards, isFilterActive } from '../lib/search'
+import { CARD_SORT_OPTIONS, DEFAULT_SORT, isCardSortKey, sortCardsBy } from '../lib/sort'
 import { visibleCards } from '../store/merge'
 import type { CardFilter } from '../lib/search'
+import type { CardSortKey } from '../lib/sort'
 import type { CardsState } from '../store/useCards'
 
 export const EMPTY_MESSAGE = 'まだ名刺がありません。「+ 名刺を追加」から登録しましょう'
@@ -13,12 +15,17 @@ export const NO_RESULT_MESSAGE = '該当する名刺がありません'
 
 export function CardList({ cards }: { cards: CardsState }) {
   const [filter, setFilter] = useState<CardFilter>({})
+  const [sort, setSort] = useState<CardSortKey>(DEFAULT_SORT)
 
   const open = useMemo(() => visibleCards(cards.cards), [cards.cards])
   // 正規化はキーを打つたびではなく一覧が変わったときだけ行う（500 件でも 1 秒以内に収める）
   const index = useMemo(() => buildSearchIndex(open), [open])
   const facets = useMemo(() => collectFacets(open), [open])
-  const results = useMemo(() => filterCards(index, filter), [index, filter])
+  // 並べ替えは絞り込みの後に掛ける（絞り込んだ結果の中での順序を選んでいるため）
+  const results = useMemo(
+    () => sortCardsBy(filterCards(index, filter), sort),
+    [index, filter, sort],
+  )
 
   const filtering = isFilterActive(filter)
 
@@ -79,15 +86,36 @@ export function CardList({ cards }: { cards: CardsState }) {
             onSelect={(value) => setFilter((f) => ({ ...f, tag: value }))}
           />
 
-          {filtering ? (
-            <button
-              type="button"
-              onClick={() => setFilter({})}
-              className="min-h-tap rounded-control px-3 text-base font-bold text-indigo hover:bg-indigo-tint"
-            >
-              絞り込みをクリア
-            </button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 項目と向きを 1 つの select にまとめる。iOS で拡大されないよう文字は 16px 以上 */}
+            <label className="flex items-center gap-2">
+              <span className="shrink-0 text-meta font-bold text-ink-faint">並び順</span>
+              <select
+                value={sort}
+                onChange={(event) => {
+                  const next = event.target.value
+                  if (isCardSortKey(next)) setSort(next)
+                }}
+                className="min-h-tap rounded-control border border-rule-strong bg-card px-2 text-base text-ink"
+              >
+                {CARD_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {filtering ? (
+              <button
+                type="button"
+                onClick={() => setFilter({})}
+                className="min-h-tap rounded-control px-3 text-base font-bold text-indigo hover:bg-indigo-tint"
+              >
+                絞り込みをクリア
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-4 space-y-3">

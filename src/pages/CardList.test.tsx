@@ -173,3 +173,69 @@ describe('一覧 / 絞り込み', () => {
     expect(screen.queryByRole('button', { name: '絞り込みをクリア' })).not.toBeInTheDocument()
   })
 })
+
+describe('一覧 / 並べ替え', () => {
+  /** 一覧に並んでいる氏名を、表示されている順に取る */
+  function shownNames() {
+    return within(screen.getByRole('list'))
+      .getAllByRole('listitem')
+      .map((item) => item.textContent ?? '')
+      .map((text) => text.replace(/\s+/g, ' ').trim())
+  }
+
+  function order() {
+    return shownNames().map((text) =>
+      ['山田 太郎', '佐藤 花子', 'John Sample'].find((name) => text.includes(name)),
+    )
+  }
+
+  it('既定は出会った日の新しい順', () => {
+    renderList()
+    expect(screen.getByLabelText('並び順')).toHaveValue('met-desc')
+    expect(order()).toEqual(['山田 太郎', '佐藤 花子', 'John Sample'])
+  })
+
+  it('出会った日の古い順に並べ替えられる', async () => {
+    renderList()
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('並び順'), 'met-asc')
+    expect(order()).toEqual(['John Sample', '佐藤 花子', '山田 太郎'])
+  })
+
+  it('氏名はふりがなの順に並べ替えられる', async () => {
+    renderList()
+    const user = userEvent.setup()
+    // 日本語ロケールでは英字が先。ふりがなの無い John Sample は氏名で並ぶ
+    await user.selectOptions(screen.getByLabelText('並び順'), 'name')
+    expect(order()).toEqual(['John Sample', '佐藤 花子', '山田 太郎'])
+  })
+
+  it('出会った場所で並べ替えられる（場所が無いものは末尾）', async () => {
+    renderList()
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('並び順'), 'place')
+    expect(order()[0]).toBe('山田 太郎')
+  })
+
+  it('並べ替えは絞り込みの結果の中で効く', async () => {
+    renderList()
+    const user = userEvent.setup()
+
+    await user.selectOptions(screen.getByLabelText('並び順'), 'met-asc')
+    await user.type(screen.getByPlaceholderText(/検索/), 'さ')
+
+    // 「さ」に当たるのは 佐藤（さとう）と 山田（会社名のサンプル）
+    expect(order()).toEqual(['佐藤 花子', '山田 太郎'])
+  })
+
+  it('並べ替えを変えても絞り込みは外れない', async () => {
+    renderList()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: /株式会社サンプル/ }))
+    await user.selectOptions(screen.getByLabelText('並び順'), 'company')
+
+    expect(order()).toEqual(['山田 太郎'])
+    expect(screen.getByRole('button', { name: '絞り込みをクリア' })).toBeInTheDocument()
+  })
+})

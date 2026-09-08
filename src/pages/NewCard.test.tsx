@@ -357,12 +357,12 @@ describe('登録画面 / OCR 実行中', () => {
     stub.finish({ text: '', lines: [] })
   })
 
-  it('読み取った文字が行ごとにコピーできる形で出る', async () => {
+  it('表を読み取るとフォームに候補が入る', async () => {
     const stub = await startOcr()
     await screen.findByRole('button', { name: '読み取り中…' })
 
     stub.finish({
-      text: '株式会社サンプル\n山田 太郎\ntaro.yamada@example.co.jp',
+      text: ['株式会社サンプル', '山田 太郎', 'taro.yamada@example.co.jp'].join('\n'),
       lines: [
         { text: '株式会社サンプル' },
         { text: '山田 太郎' },
@@ -370,44 +370,40 @@ describe('登録画面 / OCR 実行中', () => {
       ],
     })
 
-    expect(await screen.findByText('読み取った文字')).toBeInTheDocument()
-    for (const line of ['株式会社サンプル', '山田 太郎', 'taro.yamada@example.co.jp']) {
-      expect(screen.getByRole('button', { name: new RegExp(line) })).toBeInTheDocument()
-    }
+    await waitFor(() => expect(screen.getByLabelText('会社名')).toHaveValue('株式会社サンプル'))
+    expect(screen.getByLabelText('氏名')).toHaveValue('山田 太郎')
+    expect(screen.getByLabelText('メール')).toHaveValue('taro.yamada@example.co.jp')
   })
 
-  // 方針転換: どの欄に入れるかは推測しない（docs/spec.md 機能2）
-  it('読み取ってもフォームには自動で入らない', async () => {
-    const stub = await startOcr()
-    await screen.findByRole('button', { name: '読み取り中…' })
-
-    stub.finish({
-      text: '株式会社サンプル\n山田 太郎\ntaro.yamada@example.co.jp',
-      lines: [
-        { text: '株式会社サンプル' },
-        { text: '山田 太郎' },
-        { text: 'taro.yamada@example.co.jp' },
-      ],
-    })
-
-    await screen.findByText('読み取った文字')
-    for (const label of ['氏名', '会社名', 'メール', '電話', '部署', '役職']) {
-      expect(screen.getByLabelText(label)).toHaveValue('')
-    }
-  })
-
-  it('読み取った行をタップするとコピーできる', async () => {
+  it('自動入力された候補は手で直せる', async () => {
     const user = userEvent.setup()
     const stub = await startOcr()
     await screen.findByRole('button', { name: '読み取り中…' })
 
     stub.finish({ text: '株式会社サンプル', lines: [{ text: '株式会社サンプル' }] })
-    const line = await screen.findByRole('button', { name: /株式会社サンプル/ })
+    const company = await screen.findByDisplayValue('株式会社サンプル')
 
-    await user.click(line)
-    await waitFor(async () => {
-      expect(await navigator.clipboard.readText()).toBe('株式会社サンプル')
+    await user.clear(company)
+    await user.type(company, '合同会社テスト')
+    expect(company).toHaveValue('合同会社テスト')
+  })
+
+  // 裏は連絡先の続きや英語表記のことが多く、ここから埋めると表の正しい値を上書きしかねない
+  it('裏を読み取ってもフォームには入れない', async () => {
+    const stub = stubProvider()
+    clearBranchCache()
+    renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={stub.provider} />, {
+      settings: TEST_SETTINGS,
     })
+    fireEvent.change(screen.getByLabelText('裏の画像ファイルを選択'), {
+      target: { files: [new File(['fake'], 'back.jpg', { type: 'image/jpeg' })] },
+    })
+    await screen.findByRole('button', { name: '読み取り中…' })
+
+    stub.finish({ text: '株式会社サンプル', lines: [{ text: '株式会社サンプル' }] })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'この内容で登録' })).toBeEnabled())
+    expect(screen.getByLabelText('会社名')).toHaveValue('')
   })
 })
 
