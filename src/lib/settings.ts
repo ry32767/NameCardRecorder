@@ -6,6 +6,11 @@ export interface Settings {
   /** `owner/repo` 形式 */
   repository: string
   token: string
+  /**
+   * Google Cloud Vision の API キー。空なら OCR はブラウザ内の Tesseract を使う。
+   * **入っている場合だけ名刺画像が Google に送られる**（docs/architecture.md のプライバシー節）。
+   */
+  visionApiKey: string
 }
 
 export const REPOSITORY_FORMAT_MESSAGE = 'owner/repo の形式で入力してください'
@@ -37,9 +42,10 @@ export function loadSettings(): Settings | null {
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return null
-    const { repository, token } = parsed as Partial<Settings>
+    const { repository, token, visionApiKey } = parsed as Partial<Settings>
     if (typeof repository !== 'string' || typeof token !== 'string') return null
-    return { repository, token }
+    // visionApiKey は後から足したフィールド。無い保存済み設定もそのまま読めるようにする
+    return { repository, token, visionApiKey: typeof visionApiKey === 'string' ? visionApiKey : '' }
   } catch {
     // 壊れた値が入っていても落とさず「未設定」として扱う
     return null
@@ -67,4 +73,9 @@ export function maskToken(token: string): string {
 
 export function isSettingsComplete(settings: Settings | null): settings is Settings {
   return settings !== null && isValidRepository(settings.repository) && settings.token.length > 0
+}
+
+/** OCR に Cloud Vision を使うか。キーが入っているかどうかだけで決まる */
+export function usesCloudVision(settings: Settings | null): boolean {
+  return Boolean(settings?.visionApiKey)
 }

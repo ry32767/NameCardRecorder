@@ -4,3 +4,8 @@ export type CardSide = 'front' | 'back'
 export const CARD_SIDES: readonly CardSide[] = ['front', 'back']
 
 export const SIDE_LABELS: Record<CardSide, string> = { front: '表', back: '裏' }
+
+/** 裏返した先の面 */
+export function otherSide(side: CardSide): CardSide {
+  return side === 'front' ? 'back' : 'front'
+}

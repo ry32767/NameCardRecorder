@@ -48,6 +48,7 @@ describe('設定画面 / 入力と保存', () => {
       expect(loadSettings()).toEqual({
         repository: 'sample-user/namecard-data',
         token: 'ghp_dummy',
+        visionApiKey: '',
       })
     })
   })
@@ -150,5 +151,58 @@ describe('設定画面 / 設定を消去', () => {
     await user.click(screen.getByRole('button', { name: 'やめる' }))
 
     expect(loadSettings()).toEqual(TEST_SETTINGS)
+  })
+})
+
+describe('設定画面 / Cloud Vision の API キー', () => {
+  const WITH_KEY = { ...TEST_SETTINGS, visionApiKey: 'AIza_dummy_key_0000' }
+
+  it('画像が Google に送られることを、キーを入れる場所で明示している', () => {
+    renderWithProviders(<Settings />)
+    expect(screen.getByText(/名刺の画像が Google に送信されます/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Cloud Vision の API キー')).toHaveAttribute('type', 'password')
+  })
+
+  it('キーを入れて保存すると、次からその設定で読み取る', async () => {
+    renderWithProviders(<Settings />)
+    const user = await fillForm('sample-user/namecard-data', 'ghp_dummy')
+    await user.type(screen.getByLabelText('Cloud Vision の API キー'), 'AIza_dummy')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(loadSettings()?.visionApiKey).toBe('AIza_dummy'))
+  })
+
+  it('保存済みのキーはマスク表示され、DOM の属性にも現れない', () => {
+    const { container } = renderWithProviders(<Settings />, { settings: WITH_KEY })
+
+    expect(screen.getByText(/^AIza\*+$/)).toBeInTheDocument()
+    for (const element of container.querySelectorAll('*')) {
+      for (const attribute of element.attributes) {
+        expect(attribute.value).not.toContain(WITH_KEY.visionApiKey)
+      }
+    }
+    expect(container.innerHTML).not.toContain(WITH_KEY.visionApiKey)
+  })
+
+  it('キーを消すとブラウザ内の OCR に戻る', async () => {
+    renderWithProviders(<Settings />, { settings: WITH_KEY })
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: 'キーを消す' }))
+
+    await waitFor(() => expect(loadSettings()?.visionApiKey).toBe(''))
+    // トークンやリポジトリは消さない
+    expect(loadSettings()?.token).toBe(WITH_KEY.token)
+    expect(screen.getByLabelText('Cloud Vision の API キー')).toBeInTheDocument()
+  })
+
+  it('設定の消去でキーも消える', async () => {
+    renderWithProviders(<Settings />, { settings: WITH_KEY })
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '設定を消去' }))
+    await user.click(screen.getByRole('button', { name: '消去する' }))
+
+    await waitFor(() => expect(loadSettings()).toBeNull())
   })
 })

@@ -27,20 +27,27 @@ export function Settings() {
   const [testing, setTesting] = useState(false)
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [editingToken, setEditingToken] = useState(!settings?.token)
+  const [editingVisionKey, setEditingVisionKey] = useState(!settings?.visionApiKey)
 
   /**
    * トークンは state に持たず、非制御の input から必要なときだけ読む。
    * React が value を DOM に書き戻さないので、保存済みトークンが属性に現れない
-   * （docs/spec.md 機能0 / DESIGN.md 不変条件 7）。
+   * （docs/spec.md 機能0 / DESIGN.md 不変条件 7）。Vision の API キーも同じ扱いにする。
    */
   const tokenRef = useRef<HTMLInputElement>(null)
+  const visionKeyRef = useRef<HTMLInputElement>(null)
 
   function readToken(): string {
     const typed = tokenRef.current?.value.trim() ?? ''
     return typed || settings?.token || ''
   }
 
-  function validate(): { repository: string; token: string } | null {
+  function readVisionKey(): string {
+    const typed = visionKeyRef.current?.value.trim() ?? ''
+    return typed || settings?.visionApiKey || ''
+  }
+
+  function validate(): { repository: string; token: string; visionApiKey: string } | null {
     setResult(null)
     if (!isValidRepository(repository)) {
       setRepositoryError(REPOSITORY_FORMAT_MESSAGE)
@@ -53,7 +60,7 @@ export function Settings() {
       setResult({ tone: 'error', message: TOKEN_REQUIRED_MESSAGE })
       return null
     }
-    return { repository: repository.trim(), token }
+    return { repository: repository.trim(), token, visionApiKey: readVisionKey() }
   }
 
   function handleSave() {
@@ -61,8 +68,19 @@ export function Settings() {
     if (!valid) return
     save(valid)
     if (tokenRef.current) tokenRef.current.value = ''
+    if (visionKeyRef.current) visionKeyRef.current.value = ''
     setEditingToken(false)
+    setEditingVisionKey(!valid.visionApiKey)
     setResult({ tone: 'success', message: '設定を保存しました' })
+  }
+
+  /** Cloud Vision をやめてブラウザ内 OCR に戻す。キーはこの端末から消える */
+  function handleRemoveVisionKey() {
+    if (!settings) return
+    if (visionKeyRef.current) visionKeyRef.current.value = ''
+    save({ ...settings, visionApiKey: '' })
+    setEditingVisionKey(true)
+    setResult({ tone: 'success', message: 'API キーを消し、ブラウザ内の OCR に戻しました' })
   }
 
   async function handleTest() {
@@ -99,7 +117,9 @@ export function Settings() {
     setRepositoryError(null)
     setConfirmingClear(false)
     setEditingToken(true)
+    setEditingVisionKey(true)
     if (tokenRef.current) tokenRef.current.value = ''
+    if (visionKeyRef.current) visionKeyRef.current.value = ''
     setResult({ tone: 'success', message: '設定とローカルキャッシュを消去しました' })
   }
 
@@ -177,9 +197,60 @@ export function Settings() {
         </div>
 
         <section className="mt-8 rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
+          <h2 className="text-title font-bold text-ink">文字認識（OCR）</h2>
+          <p className="mt-1 text-base text-ink-soft">
+            既定はこの端末のブラウザ内で読み取ります（画像は外に出ませんが、精度は高くありません）。
+            <strong className="font-bold text-ink">Google Cloud Vision の API キー</strong>
+            を入れると精度の高い読み取りに切り替わります。
+          </p>
+          <p className="mt-2 text-meta text-vermilion">
+            キーを入れている間は、<strong className="font-bold">名刺の画像が Google に送信されます。</strong>
+            無料枠を超えると課金されます。
+          </p>
+
+          <div className="mt-4">
+            <span className="mb-1 block text-meta font-bold text-ink-soft">
+              Cloud Vision の API キー
+              <span className="ml-1 text-ink-faint">（任意）</span>
+            </span>
+
+            {settings?.visionApiKey && !editingVisionKey ? (
+              <div className="flex flex-wrap items-center gap-3">
+                {/* 実値ではなく伏せ字だけを描く */}
+                <output className="font-mono text-base text-ink-soft">
+                  {maskToken(settings.visionApiKey)}
+                </output>
+                <Button onClick={() => setEditingVisionKey(true)}>キーを変更</Button>
+                <Button variant="danger" onClick={handleRemoveVisionKey}>
+                  キーを消す
+                </Button>
+              </div>
+            ) : (
+              <>
+                <input
+                  ref={visionKeyRef}
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="AIza…"
+                  aria-label="Cloud Vision の API キー"
+                  className="min-h-tap w-full rounded-control border border-rule-strong bg-card px-3 py-2 font-mono text-base text-ink placeholder:text-ink-faint"
+                />
+                <p className="mt-1 text-meta text-ink-faint">
+                  Google Cloud で Cloud Vision API を有効にして発行したキーを貼り、「保存」を押してください。
+                  キーはブラウザから送るため URL に載ります。Google Cloud
+                  側でこのアプリのドメインに <strong className="font-bold text-ink">HTTP リファラー制限</strong>{' '}
+                  を掛け、用途を Cloud Vision API だけに絞ってください。空のままなら Cloud Vision は使いません。
+                </p>
+              </>
+            )}
+          </div>
+        </section>
+
+        <section className="mt-8 rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
           <h2 className="text-title font-bold text-ink">設定を消去</h2>
           <p className="mt-1 text-base text-ink-soft">
-            この端末に保存されたトークン・リポジトリ設定・一覧のキャッシュをすべて消します。
+            この端末に保存されたトークン・API キー・リポジトリ設定・一覧のキャッシュをすべて消します。
             GitHub 側の名刺データは消えません。
           </p>
 

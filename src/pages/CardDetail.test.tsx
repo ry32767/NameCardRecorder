@@ -1,5 +1,8 @@
+import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { server } from '../test/server'
 import { Route, Routes } from 'react-router-dom'
 import { TEST_SETTINGS, renderWithProviders } from '../test/render'
 import { CardDetail } from './CardDetail'
@@ -129,5 +132,60 @@ describe('詳細画面', () => {
     expect(
       within(screen.getByRole('main')).getByRole('link', { name: '一覧に戻る' }),
     ).toHaveAttribute('href', '/')
+  })
+})
+
+describe('詳細画面 / 名刺画像の表裏', () => {
+  const API = 'https://api.github.com/repos/sample-user/namecard-data/contents'
+
+  function imageHandlers() {
+    return [
+      http.get(`${API}/cards/images/2026/front.jpg`, () => HttpResponse.text('front-bytes')),
+      http.get(`${API}/cards/images/2026/front-back.jpg`, () => HttpResponse.text('back-bytes')),
+    ]
+  }
+
+  const withImages = {
+    ...sample,
+    image: 'cards/images/2026/front.jpg',
+    imageBack: 'cards/images/2026/front-back.jpg',
+  }
+
+  it('最初は表だけを出し、押すと裏に切り替わる', async () => {
+    server.use(...imageHandlers())
+    renderDetail([withImages])
+    const user = userEvent.setup()
+
+    const front = await screen.findByAltText('登録した名刺の画像（表）')
+    expect(screen.queryByAltText('登録した名刺の画像（裏）')).not.toBeInTheDocument()
+
+    await user.click(front)
+    expect(await screen.findByAltText('登録した名刺の画像（裏）')).toBeInTheDocument()
+    expect(screen.queryByAltText('登録した名刺の画像（表）')).not.toBeInTheDocument()
+
+    // ボタンからも戻せる（キーボードだけでも操作できる）
+    await user.click(screen.getByRole('button', { name: '表を見る' }))
+    expect(await screen.findByAltText('登録した名刺の画像（表）')).toBeInTheDocument()
+  })
+
+  it('裏が無い名刺には裏返す導線を出さない', async () => {
+    server.use(...imageHandlers())
+    renderDetail([{ ...withImages, imageBack: '' }])
+
+    await screen.findByAltText('登録した名刺の画像（表）')
+    expect(screen.queryByRole('button', { name: '裏を見る' })).not.toBeInTheDocument()
+  })
+
+  it('拡大は別のボタンで、Esc で閉じられる', async () => {
+    server.use(...imageHandlers())
+    renderDetail([withImages])
+    const user = userEvent.setup()
+
+    await screen.findByAltText('登録した名刺の画像（表）')
+    await user.click(screen.getByRole('button', { name: '拡大' }))
+    expect(await screen.findByRole('dialog', { name: /拡大表示/ })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

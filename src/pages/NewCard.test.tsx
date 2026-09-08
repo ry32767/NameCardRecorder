@@ -278,37 +278,42 @@ describe('登録画面 / 画像の取り込み', () => {
     expect(screen.queryByText(/読み取っています/)).not.toBeInTheDocument()
   })
 
-  it('表と裏それぞれにカメラ撮影と画像選択の入口がある', () => {
+  it('最初は表だけを見せ、入口も表のものになっている', () => {
     renderPage()
-    for (const label of [
-      '表をカメラで撮影',
-      '表の画像ファイルを選択',
-      '裏をカメラで撮影',
-      '裏の画像ファイルを選択',
-    ]) {
-      expect(screen.getByLabelText(label)).toBeInTheDocument()
-    }
-    // 表・裏で 1 組ずつ = 2 組
-    expect(screen.getAllByRole('button', { name: 'カメラで撮影' })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: '画像を選ぶ' })).toHaveLength(2)
+    expect(screen.getByLabelText('表をカメラで撮影')).toBeInTheDocument()
+    expect(screen.getByLabelText('表の画像ファイルを選択')).toBeInTheDocument()
+    // 画面に出るのは常に片面だけ（裏の入口は裏返してから）
+    expect(screen.queryByLabelText('裏の画像ファイルを選択')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'カメラで撮影' })).toHaveLength(1)
   })
 
-  it('裏面は任意であることが分かる', () => {
+  it('裏返すと裏の入口に切り替わる', async () => {
     renderPage()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '裏を見る' }))
+
+    expect(screen.getByLabelText('裏の画像ファイルを選択')).toBeInTheDocument()
+    expect(screen.queryByLabelText('表の画像ファイルを選択')).not.toBeInTheDocument()
+    // 裏面が任意であることと、読み取り結果の行き先が分かる
     expect(screen.getByText('（任意）')).toBeInTheDocument()
+    expect(screen.getByText(/裏の文字はフォームには入れず/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '表を見る' }))
+    expect(screen.getByLabelText('表の画像ファイルを選択')).toBeInTheDocument()
   })
 
-  it('裏の読み取り結果がどこへ行くのかを説明している', () => {
+  it('裏返さなくても、どちらの面を選んだかが分かる', () => {
     renderPage()
-    expect(screen.getByText(/裏の文字はフォームには入れず/)).toBeInTheDocument()
+    expect(screen.getByText('表: 未選択 / 裏: 未選択')).toBeInTheDocument()
   })
 })
 
 describe('登録画面 / OCR 実行中', () => {
   // 実際の Tesseract は動かさず、OcrProvider を差し替えて「読み取り中」の状態を作る
+  type StubLine = { text: string; bbox?: { x0: number; y0: number; x1: number; y1: number } }
   function stubProvider() {
-    let resolve!: (value: { text: string; lines: { text: string }[] }) => void
-    const pending = new Promise<{ text: string; lines: { text: string }[] }>((r) => {
+    let resolve!: (value: { text: string; lines: StubLine[] }) => void
+    const pending = new Promise<{ text: string; lines: StubLine[] }>((r) => {
       resolve = r
     })
     let report: ((p: { progress: number; status: string }) => void) | undefined
@@ -400,6 +405,7 @@ describe('登録画面 / OCR 実行中', () => {
     renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={stub.provider} />, {
       settings: TEST_SETTINGS,
     })
+    await userEvent.setup().click(screen.getByRole('button', { name: '裏を見る' }))
     fireEvent.change(screen.getByLabelText('裏の画像ファイルを選択'), {
       target: { files: [new File(['fake'], 'back.jpg', { type: 'image/jpeg' })] },
     })
@@ -462,10 +468,13 @@ describe('登録画面 / 表裏 2 枚の登録', () => {
     })
     await waitFor(() => expect(screen.getByAltText(/表/)).toBeInTheDocument())
 
+    await user.click(screen.getByRole('button', { name: '裏を見る' }))
     fireEvent.change(screen.getByLabelText('裏の画像ファイルを選択'), {
       target: { files: [imageFile('back.jpg')] },
     })
     await waitFor(() => expect(screen.getByAltText(/裏/)).toBeInTheDocument())
+    // 裏を選んだあとも表は保持されている
+    expect(screen.getByText('表: 選択済み / 裏: 選択済み')).toBeInTheDocument()
 
     await user.type(screen.getByLabelText('氏名'), '鈴木 一郎')
     await user.click(screen.getByRole('button', { name: 'この内容で登録' }))
@@ -495,5 +504,144 @@ describe('登録画面 / 表裏 2 枚の登録', () => {
 
     await user.click(screen.getByRole('button', { name: '表を外す' }))
     expect(screen.queryByAltText(/表/)).not.toBeInTheDocument()
+  })
+})
+
+describe('登録画面 / 読み取った文字の重ね表示', () => {
+  const LINES = [
+    { text: '株式会社サンプル', bbox: { x0: 60, y0: 80, x1: 500, y1: 130 } },
+    { text: '山田 太郎', bbox: { x0: 60, y0: 200, x1: 360, y1: 260 } },
+  ]
+
+  function stub() {
+    return {
+      recognize: () =>
+        Promise.resolve({ text: '株式会社サンプル\n山田 太郎', lines: LINES }),
+      terminate: () => Promise.resolve(),
+    }
+  }
+
+  async function readFront() {
+    clearBranchCache()
+    renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={stub()} />, {
+      settings: TEST_SETTINGS,
+    })
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
+      target: { files: [new File(['fake'], 'card.jpg', { type: 'image/jpeg' })] },
+    })
+    await screen.findByRole('button', { name: '株式会社サンプル をコピー' })
+  }
+
+  it('読み取った行が画像の上に置かれる', async () => {
+    await readFront()
+    // 画像と同じ座標系の viewBox に載っているので、表示サイズが変わっても位置がずれない
+    expect(screen.getByRole('group', { name: '読み取った文字' })).toHaveAttribute(
+      'viewBox',
+      '0 0 1600 967',
+    )
+    expect(screen.getByRole('button', { name: '山田 太郎 をコピー' })).toBeInTheDocument()
+  })
+
+  it('置かれた文字を押すとその行だけコピーされる', async () => {
+    const user = userEvent.setup()
+    await readFront()
+
+    await user.click(screen.getByRole('button', { name: '株式会社サンプル をコピー' }))
+
+    expect(await navigator.clipboard.readText()).toBe('株式会社サンプル')
+    expect(screen.getByText('コピーしました')).toBeInTheDocument()
+  })
+
+  it('文字を押しても裏返らない（コピーが優先される）', async () => {
+    const user = userEvent.setup()
+    await readFront()
+
+    await user.click(screen.getByRole('button', { name: '山田 太郎 をコピー' }))
+    expect(screen.getByLabelText('表の画像ファイルを選択')).toBeInTheDocument()
+  })
+
+  it('画像の文字以外の場所を押すと裏返る', async () => {
+    const user = userEvent.setup()
+    await readFront()
+
+    await user.click(screen.getByAltText(/表/))
+    expect(screen.getByLabelText('裏の画像ファイルを選択')).toBeInTheDocument()
+  })
+})
+
+describe('登録画面 / Cloud Vision', () => {
+  const VISION = 'https://vision.googleapis.com/v1/images:annotate'
+
+  function annotation() {
+    return {
+      text: '株式会社サンプル',
+      pages: [
+        {
+          blocks: [
+            {
+              paragraphs: [
+                {
+                  words: [
+                    {
+                      boundingBox: {
+                        vertices: [
+                          { x: 60, y: 80 },
+                          { x: 500, y: 80 },
+                          { x: 500, y: 130 },
+                          { x: 60, y: 130 },
+                        ],
+                      },
+                      symbols: [...'株式会社サンプル'].map((text, index) => ({
+                        text,
+                        ...(index === 7
+                          ? { property: { detectedBreak: { type: 'LINE_BREAK' } } }
+                          : {}),
+                      })),
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+  }
+
+  it('API キーが設定されていれば Cloud Vision で読み、結果をフォームに入れる', async () => {
+    let called = 0
+    server.use(
+      http.post(VISION, () => {
+        called += 1
+        return HttpResponse.json({ responses: [{ fullTextAnnotation: annotation() }] })
+      }),
+    )
+
+    clearBranchCache()
+    // ocrProvider を渡さない＝設定からエンジンを選ぶ本番の経路を通す
+    renderWithProviders(<NewCard onCreated={vi.fn()} />, {
+      settings: { ...TEST_SETTINGS, visionApiKey: 'test-key' },
+    })
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
+      target: { files: [new File(['fake'], 'card.jpg', { type: 'image/jpeg' })] },
+    })
+
+    await waitFor(() => expect(screen.getByLabelText('会社名')).toHaveValue('株式会社サンプル'))
+    expect(called).toBe(1)
+  })
+
+  it('キーが拒否されたら理由を見せ、手入力で登録できる状態にする', async () => {
+    server.use(http.post(VISION, () => HttpResponse.json({ error: {} }, { status: 403 })))
+
+    clearBranchCache()
+    renderWithProviders(<NewCard onCreated={vi.fn()} />, {
+      settings: { ...TEST_SETTINGS, visionApiKey: 'test-key' },
+    })
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
+      target: { files: [new File(['fake'], 'card.jpg', { type: 'image/jpeg' })] },
+    })
+
+    expect(await screen.findByText(/Cloud Vision に拒否されました/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'この内容で登録' })).toBeEnabled()
   })
 })

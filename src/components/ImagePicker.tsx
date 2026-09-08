@@ -1,105 +1,99 @@
 import { useRef } from 'react'
 import { Button } from './Button'
-import { CARD_SIDES, SIDE_LABELS } from '../lib/cardSide'
+import { OcrOverlay } from './OcrOverlay'
+import { CARD_SIDES, SIDE_LABELS, otherSide } from '../lib/cardSide'
+import type { OverlayLine } from '../lib/ocr/overlay'
 import type { CardSide } from '../lib/cardSide'
 import type { PreparedImage } from '../lib/ocr/image'
 
 interface ImagePickerProps {
   images: Record<CardSide, PreparedImage | null>
+  /** 面ごとの、画像に重ねる読み取り結果 */
+  overlays: Record<CardSide, OverlayLine[]>
+  /** いま表にしている面 */
+  side: CardSide
+  onFlip: () => void
   /** 読み取り中の面。どちらも読んでいなければ null */
   readingSide: CardSide | null
   progress: number
   onFile: (side: CardSide, file: File | undefined) => Promise<void>
   onClear: (side: CardSide) => void
+  onCopy: (text: string) => void
 }
 
 /**
  * 名刺画像の取り込み。**表と裏で最大 2 枚**まで選べる（裏は任意）。
- * 1 枚だけの登録が普通なので、裏は「必要なら足す」見せ方にする。
+ * 1 枚のカードを裏返して使う見せ方にして、画面には常に片面だけを出す。
  */
-export function ImagePicker({ images, readingSide, progress, onFile, onClear }: ImagePickerProps) {
-  return (
-    <section className="rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
-      <h2 className="text-title font-bold text-ink">名刺の画像</h2>
-      <p className="mt-1 text-meta text-ink-faint">
-        表だけでも登録できます。画像はこの端末で処理され、あなたの private
-        リポジトリにだけ保存されます。
-      </p>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {CARD_SIDES.map((side) => (
-          <ImageSlot
-            key={side}
-            side={side}
-            image={images[side]}
-            reading={readingSide === side}
-            // 片方を読み取っている間は、もう片方も操作させない（進捗表示が混ざる）
-            disabled={readingSide !== null && readingSide !== side}
-            progress={progress}
-            onFile={onFile}
-            onClear={onClear}
-          />
-        ))}
-      </div>
-    </section>
-  )
-}
-
-interface ImageSlotProps {
-  side: CardSide
-  image: PreparedImage | null
-  reading: boolean
-  disabled: boolean
-  progress: number
-  onFile: (side: CardSide, file: File | undefined) => Promise<void>
-  onClear: (side: CardSide) => void
-}
-
-function ImageSlot({ side, image, reading, disabled, progress, onFile, onClear }: ImageSlotProps) {
+export function ImagePicker({
+  images,
+  overlays,
+  side,
+  onFlip,
+  readingSide,
+  progress,
+  onFile,
+  onClear,
+  onCopy,
+}: ImagePickerProps) {
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
   const label = SIDE_LABELS[side]
-  const busy = reading || disabled
+  const image = images[side]
+  const reading = readingSide !== null
+  const readingThis = readingSide === side
 
   return (
-    <div className="rounded-card border border-rule p-3">
-      <div className="flex items-baseline justify-between">
-        <h3 className="text-base font-bold text-ink">
-          {label}
-          {side === 'back' ? <span className="ml-1 text-meta text-ink-faint">（任意）</span> : null}
-        </h3>
-        {image ? (
-          <button
-            type="button"
-            onClick={() => onClear(side)}
-            disabled={busy}
-            className="min-h-tap rounded-control px-2 text-meta font-bold text-vermilion hover:bg-vermilion-tint disabled:opacity-50"
-          >
-            {label}を外す
-          </button>
-        ) : null}
+    <section className="rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-title font-bold text-ink">
+          名刺の画像
+          <span className="ml-2 text-meta font-normal text-ink-faint">{label}</span>
+          {side === 'back' ? (
+            <span className="ml-1 text-meta font-normal text-ink-faint">（任意）</span>
+          ) : null}
+        </h2>
+        {/* 面の切り替えは常に出す。裏がまだ無くても、裏を撮るにはここから行く */}
+        <Button onClick={onFlip} disabled={reading}>
+          {SIDE_LABELS[otherSide(side)]}を見る
+        </Button>
       </div>
 
-      {/* 裏の読み取りは何も起きないように見えるので、どこへ行くのかを先に言っておく */}
-      {side === 'back' ? (
-        <p className="mt-1 text-meta text-ink-faint">
-          裏の文字はフォームには入れず、あとで見返せるように名刺の記録に残します。
-        </p>
-      ) : null}
+      <p className="mt-1 text-meta text-ink-faint">
+        {side === 'front'
+          ? '表だけでも登録できます。読み取った文字は画像の上に出るので、押すとコピーできます。'
+          : '裏の文字はフォームには入れず、あとで見返せるように名刺の記録に残します。'}
+      </p>
 
-      {image ? (
-        <img
-          src={image.previewUrl}
-          alt={`選択した名刺の画像（${label}）`}
-          className="mt-2 w-full rounded-card border border-rule object-contain"
-        />
-      ) : (
-        <div className="mt-2 flex aspect-meishi items-center justify-center rounded-card border border-dashed border-rule-strong bg-paper text-meta text-ink-faint">
-          未選択
-        </div>
-      )}
+      {/* 画像そのものを押すと裏返る。文字の上を押したときはコピーが優先される */}
+      <div
+        className="relative mt-3 overflow-hidden rounded-card border border-rule"
+        onClick={onFlip}
+        title={`押すと${SIDE_LABELS[otherSide(side)]}に切り替わります`}
+      >
+        {image ? (
+          <>
+            <img
+              src={image.previewUrl}
+              alt={`選択した名刺の画像（${label}）`}
+              className="block w-full object-contain"
+            />
+            <OcrOverlay
+              lines={overlays[side]}
+              width={image.width}
+              height={image.height}
+              onCopy={onCopy}
+            />
+          </>
+        ) : (
+          <div className="flex aspect-meishi items-center justify-center bg-paper text-meta text-ink-faint">
+            {label}は未選択
+          </div>
+        )}
+      </div>
 
-      {reading ? (
+      {readingThis ? (
         <div className="mt-3">
           <div className="flex items-center justify-between text-meta text-ink-soft">
             <span>{label}を読み取っています…</span>
@@ -137,13 +131,25 @@ function ImageSlot({ side, image, reading, disabled, progress, onFile, onClear }
           aria-label={`${label}の画像ファイルを選択`}
           onChange={(e) => void onFile(side, e.target.files?.[0])}
         />
-        <Button onClick={() => cameraRef.current?.click()} disabled={busy}>
+        <Button onClick={() => cameraRef.current?.click()} disabled={reading}>
           カメラで撮影
         </Button>
-        <Button onClick={() => fileRef.current?.click()} disabled={busy}>
+        <Button onClick={() => fileRef.current?.click()} disabled={reading}>
           画像を選ぶ
         </Button>
+        {image ? (
+          <Button variant="danger" onClick={() => onClear(side)} disabled={reading}>
+            {label}を外す
+          </Button>
+        ) : null}
       </div>
-    </div>
+
+      {/* どちらの面が入っているかは、裏返さなくても分かるようにする */}
+      <p className="mt-3 text-meta text-ink-faint">
+        {CARD_SIDES.map((each) => `${SIDE_LABELS[each]}: ${images[each] ? '選択済み' : '未選択'}`).join(
+          ' / ',
+        )}
+      </p>
+    </section>
   )
 }

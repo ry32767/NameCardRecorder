@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { AppHeader } from '../components/AppHeader'
-import { CardImage } from '../components/CardImage'
+import { CardImages } from '../components/CardImages'
 import { NAME_PLACEHOLDER } from '../lib/card/serialize'
 import { useSettings } from '../store/settingsContext'
 import type { Card } from '../lib/card/types'
@@ -91,21 +91,7 @@ export function CardDetail({ cards }: { cards: CardsState }) {
 
         {repoRef && (card.image || card.imageBack) ? (
           <section className="mt-4">
-            <h3 className="mb-2 text-title font-bold text-ink">名刺画像</h3>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {card.image ? (
-                <figure>
-                  <figcaption className="mb-1 text-meta text-ink-faint">表</figcaption>
-                  <CardImage repoRef={repoRef} path={card.image} side="表" />
-                </figure>
-              ) : null}
-              {card.imageBack ? (
-                <figure>
-                  <figcaption className="mb-1 text-meta text-ink-faint">裏</figcaption>
-                  <CardImage repoRef={repoRef} path={card.imageBack} side="裏" />
-                </figure>
-              ) : null}
-            </div>
+            <CardImages repoRef={repoRef} image={card.image} imageBack={card.imageBack} />
           </section>
         ) : null}
 

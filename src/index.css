@@ -20,6 +20,13 @@
     @apply outline-none ring-2 ring-indigo ring-offset-2 ring-offset-paper;
   }
 
+  /* SVG の中では box-shadow のリングが描かれないので、枠線を強めて代わりにする
+     （画像に重ねた読み取り結果。DESIGN.md 不変条件 9） */
+  svg g[role='button']:focus-visible .ocr-box {
+    stroke: theme('colors.vermilion.DEFAULT');
+    stroke-width: 6;
+  }
+
   /* 長いメールアドレス・URL が 375px で横スクロールを作らないようにする */
   a,
   p,
