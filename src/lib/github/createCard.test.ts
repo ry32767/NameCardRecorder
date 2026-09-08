@@ -204,3 +204,75 @@ describe('createCard / 失敗時に中途半端な状態を残さない', () => 
     expect(imageCommitted).toBe(false)
   })
 })
+
+describe('createCard / 表裏 2 枚の画像', () => {
+  function contentsHandler(onPut: (path: string) => void) {
+    return http.put(
+      `${API}/repos/sample-user/namecard-data/contents/cards/images/:year/:file`,
+      ({ params }) => {
+        onPut(String(params['file']))
+        return HttpResponse.json({ content: { path: 'x', sha: 'abc' } }, { status: 201 })
+      },
+    )
+  }
+
+  it('表だけでも登録できる', async () => {
+    const put: string[] = []
+    server.use(repoHandler(), labelHandler(), contentsHandler((f) => put.push(f)), issueHandler(() => {}))
+
+    const card = await createCard(ref, { fields, imageBase64: 'ZmFrZQ==' })
+
+    expect(put).toHaveLength(1)
+    expect(card.image).toMatch(/\d{8}-[a-z0-9]{4}\.jpg$/)
+    expect(card.imageBack).toBe('')
+  })
+
+  it('表と裏の 2 枚をコミットし、裏は -back のパスになる', async () => {
+    const put: string[] = []
+    server.use(repoHandler(), labelHandler(), contentsHandler((f) => put.push(f)), issueHandler(() => {}))
+
+    const card = await createCard(ref, {
+      fields,
+      imageBase64: 'ZmFrZQ==',
+      imageBackBase64: 'YmFjaw==',
+    })
+
+    expect(put).toHaveLength(2)
+    expect(card.image).toMatch(/\d{8}-[a-z0-9]{4}\.jpg$/)
+    expect(card.imageBack).toBe(card.image.replace('.jpg', '-back.jpg'))
+  })
+
+  it('裏だけの登録もできる', async () => {
+    const put: string[] = []
+    server.use(repoHandler(), labelHandler(), contentsHandler((f) => put.push(f)), issueHandler(() => {}))
+
+    const card = await createCard(ref, { fields, imageBackBase64: 'YmFjaw==' })
+
+    expect(put).toHaveLength(1)
+    expect(card.image).toBe('')
+    expect(card.imageBack).toMatch(/-back\.jpg$/)
+  })
+
+  it('裏のコミットに失敗したら Issue を作らない', async () => {
+    let issueCreated = false
+    server.use(
+      repoHandler(),
+      labelHandler(),
+      http.put(
+        `${API}/repos/sample-user/namecard-data/contents/cards/images/:year/:file`,
+        ({ params }) =>
+          String(params['file']).includes('-back')
+            ? HttpResponse.json({ message: 'boom' }, { status: 500 })
+            : HttpResponse.json({ content: { path: 'x', sha: 'abc' } }, { status: 201 }),
+      ),
+      issueHandler(() => {
+        issueCreated = true
+      }),
+    )
+
+    await expect(
+      createCard(ref, { fields, imageBase64: 'ZmFrZQ==', imageBackBase64: 'YmFjaw==' }),
+    ).rejects.toBeInstanceOf(ImageUploadError)
+    expect(issueCreated).toBe(false)
+  })
+})

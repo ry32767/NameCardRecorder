@@ -31,9 +31,11 @@ function sampleCard(overrides: Partial<CardFields> = {}): CardFields {
     metOn: '2026-09-08',
     metAt: '東京ビッグサイト / 展示会2026',
     image: 'cards/images/2026/20260908-013a.jpg',
+    imageBack: 'cards/images/2026/20260908-013a-back.jpg',
     tags: ['要フォロー'],
     memo: '新製品の件で再連絡する。',
     ocrText: '株式会社サンプル\n営業本部 第一営業部 課長\n山田 太郎',
+    ocrTextBack: 'Sample Inc.\nTaro Yamada\nSales Division',
     ...overrides,
   }
 }
@@ -56,17 +58,28 @@ describe('serializeIssueBody', () => {
     expect(body).not.toContain('department')
   })
 
-  it('画像を raw URL 付きの Markdown で参照する', () => {
+  it('表裏の画像を raw URL 付きの Markdown で参照する', () => {
     const body = serializeIssueBody(sampleCard(), ctx)
     expect(body).toContain(
-      '![名刺](https://github.com/sample-user/namecard-data/blob/main/cards/images/2026/20260908-013a.jpg?raw=true)',
+      '![名刺（表）](https://github.com/sample-user/namecard-data/blob/main/cards/images/2026/20260908-013a.jpg?raw=true)',
+    )
+    expect(body).toContain(
+      '![名刺（裏）](https://github.com/sample-user/namecard-data/blob/main/cards/images/2026/20260908-013a-back.jpg?raw=true)',
     )
   })
 
-  it('OCR 生テキストを details に畳む', () => {
+  it('裏面が無ければ裏の画像行を書かない', () => {
+    const body = serializeIssueBody(sampleCard({ imageBack: '' }), ctx)
+    expect(body).toContain('![名刺（表）]')
+    expect(body).not.toContain('![名刺（裏）]')
+  })
+
+  it('OCR 生テキストを表裏それぞれの details に畳む', () => {
     const body = serializeIssueBody(sampleCard(), ctx)
-    expect(body).toContain('<details><summary>OCR 生テキスト</summary>')
+    expect(body).toContain('<details><summary>OCR 生テキスト（表）</summary>')
+    expect(body).toContain('<details><summary>OCR 生テキスト（裏）</summary>')
     expect(body).toContain('山田 太郎')
+    expect(body).toContain('Sales Division')
   })
 })
 
@@ -113,6 +126,48 @@ describe('parseIssueBody / ラウンドトリップ', () => {
     const original = sampleCard({ tags: ['要フォロー', '展示会2026'] })
     const parsed = parseIssueBody(serializeIssueBody(original, ctx))
     expect(parsed.tags).toEqual(['要フォロー', '展示会2026'])
+  })
+
+  it('表と裏の OCR テキストが取り違えられずにラウンドトリップする', () => {
+    const original = sampleCard()
+    const parsed = parseIssueBody(serializeIssueBody(original, ctx))
+    expect(parsed.ocrText).toBe(original.ocrText)
+    expect(parsed.ocrTextBack).toBe(original.ocrTextBack)
+    expect(parsed.image).toBe(original.image)
+    expect(parsed.imageBack).toBe(original.imageBack)
+  })
+
+  it('裏だけ OCR テキストがある場合も読み分けられる', () => {
+    const original = sampleCard({ ocrText: '' })
+    const parsed = parseIssueBody(serializeIssueBody(original, ctx))
+    expect(parsed.ocrText).toBe('')
+    expect(parsed.ocrTextBack).toBe(original.ocrTextBack)
+  })
+
+  // 表裏を分ける前に作られた Issue（summary が「OCR 生テキスト」だけ）も読めること
+  it('旧形式の単一 details を表の OCR テキストとして読む（後方互換）', () => {
+    const body = [
+      '<!-- namecard:v1 -->',
+      '',
+      '```yaml',
+      'name: 佐藤 花子',
+      'image: cards/images/2026/20260101-aaaa.jpg',
+      '```',
+      '',
+      '<details><summary>OCR 生テキスト</summary>',
+      '',
+      '```text',
+      '有限会社テスト',
+      '```',
+      '',
+      '</details>',
+    ].join('\n')
+
+    const parsed = parseIssueBody(body)
+    expect(parsed.ocrText).toBe('有限会社テスト')
+    expect(parsed.ocrTextBack).toBe('')
+    expect(parsed.image).toBe('cards/images/2026/20260101-aaaa.jpg')
+    expect(parsed.imageBack).toBe('')
   })
 
   it('マーカーが無い本文でも YAML が読めれば読む（後方互換）', () => {

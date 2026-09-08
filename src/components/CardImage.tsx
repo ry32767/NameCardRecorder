@@ -6,7 +6,16 @@ import type { RepoRef } from '../lib/github/types'
  * private リポジトリの名刺画像を、トークン付きで取得して表示する。
  * タップで拡大（DESIGN.md の対象画面インベントリ / docs/spec.md 機能4）。
  */
-export function CardImage({ repoRef, path }: { repoRef: RepoRef; path: string }) {
+export function CardImage({
+  repoRef,
+  path,
+  side,
+}: {
+  repoRef: RepoRef
+  path: string
+  /** 「表」「裏」。読み上げと拡大表示のラベルに使う */
+  side: string
+}) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [zoomed, setZoomed] = useState(false)
@@ -57,20 +66,20 @@ export function CardImage({ repoRef, path }: { repoRef: RepoRef; path: string })
         type="button"
         onClick={() => setZoomed(true)}
         className="block w-full rounded-card border border-rule bg-card p-1"
-        aria-label="名刺画像を拡大する"
+        aria-label={`名刺画像（${side}）を拡大する`}
       >
-        <img src={url} alt="登録した名刺の画像" className="w-full rounded-card object-contain" />
+        <img src={url} alt={`登録した名刺の画像（${side}）`} className="w-full rounded-card object-contain" />
       </button>
 
       {zoomed ? (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="名刺画像の拡大表示"
+          aria-label={`名刺画像（${side}）の拡大表示`}
           className="fixed inset-0 z-20 flex items-center justify-center bg-ink/90 p-4"
           onClick={() => setZoomed(false)}
         >
-          <img src={url} alt="登録した名刺の画像（拡大）" className="max-h-full max-w-full" />
+          <img src={url} alt={`登録した名刺の画像（${side}・拡大）`} className="max-h-full max-w-full" />
           <button
             type="button"
             onClick={() => setZoomed(false)}

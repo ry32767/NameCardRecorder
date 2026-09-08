@@ -35,13 +35,22 @@ export function clearBranchCache(): void {
   branchCache.clear()
 }
 
-/** cards/images/{YYYY}/{YYYYMMDD}-{ランダム4文字}.jpg */
-export function buildImagePath(now: Date = new Date()): string {
+/**
+ * cards/images/{YYYY}/{YYYYMMDD}-{ランダム4文字}.jpg（表）
+ * 裏は同じ基底に `-back` を付ける。表裏が隣り合って並び、対応が目で見て分かるようにするため。
+ */
+export function buildImagePath(now: Date = new Date(), side: 'front' | 'back' = 'front'): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const day = String(now.getDate()).padStart(2, '0')
   const suffix = randomSuffix()
-  return `cards/images/${year}/${year}${month}${day}-${suffix}.jpg`
+  return `cards/images/${year}/${year}${month}${day}-${suffix}${side === 'back' ? '-back' : ''}.jpg`
+}
+
+/** 表裏で同じ基底名を共有させる */
+export function buildImagePathPair(now: Date = new Date()): { front: string; back: string } {
+  const front = buildImagePath(now)
+  return { front, back: front.replace(/\.jpg$/, '-back.jpg') }
 }
 
 function randomSuffix(): string {
@@ -53,8 +62,10 @@ function randomSuffix(): string {
 
 export interface CreateCardInput {
   fields: CardFields
-  /** 名刺画像の base64（データ URL のプレフィックスを含まない）。無い場合は画像なしで登録する */
+  /** 表面画像の base64（データ URL のプレフィックスを含まない）。無い場合は画像なしで登録する */
   imageBase64?: string
+  /** 裏面画像の base64。任意 */
+  imageBackBase64?: string
 }
 
 /**
@@ -74,18 +85,28 @@ export async function createCard(ref: RepoRef, input: CreateCardInput): Promise<
   const labels = buildCardLabels(input.fields)
   await ensureLabels(ref, labels)
 
+  const paths = buildImagePathPair()
   let imagePath = ''
-  if (input.imageBase64) {
-    imagePath = buildImagePath()
-    try {
+  let imageBackPath = ''
+
+  // 表・裏とも Issue 作成より先にコミットする。
+  // どちらか 1 枚でも失敗したら Issue を作らない（本文だけ残って画像リンクが 404 になる状態を作らない）。
+  // 先に上がった 1 枚は孤児として残るが、再試行では別のパスを採るので上書きも取り違えも起きない。
+  try {
+    if (input.imageBase64) {
       // コミットメッセージに氏名や会社名を入れない（個人情報を Git 履歴の見出しに残さない）
-      await putFile(ref, imagePath, input.imageBase64, `Add card image ${imagePath}`)
-    } catch {
-      throw new ImageUploadError()
+      await putFile(ref, paths.front, input.imageBase64, `Add card image ${paths.front}`)
+      imagePath = paths.front
     }
+    if (input.imageBackBase64) {
+      await putFile(ref, paths.back, input.imageBackBase64, `Add card image ${paths.back}`)
+      imageBackPath = paths.back
+    }
+  } catch {
+    throw new ImageUploadError()
   }
 
-  const fields: CardFields = { ...input.fields, image: imagePath }
+  const fields: CardFields = { ...input.fields, image: imagePath, imageBack: imageBackPath }
 
   const issue = await createIssue(ref, {
     title: buildIssueTitle(fields),

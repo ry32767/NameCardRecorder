@@ -272,16 +272,30 @@ describe('登録画面 / 画像の取り込み', () => {
     const file = new File(['dummy'], 'note.txt', { type: 'text/plain' })
     // userEvent.upload は accept 属性で弾いてしまうため、
     // ドラッグ&ドロップ等で画像以外が渡ってきた場合を change で直接再現する
-    fireEvent.change(screen.getByLabelText('画像ファイルを選択'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), { target: { files: [file] } })
 
     expect(await screen.findByText('画像ファイルを選んでください')).toBeInTheDocument()
     expect(screen.queryByText(/読み取っています/)).not.toBeInTheDocument()
   })
 
-  it('カメラ撮影と画像選択の入口が両方ある', () => {
+  it('表と裏それぞれにカメラ撮影と画像選択の入口がある', () => {
     renderPage()
-    expect(screen.getByRole('button', { name: 'カメラで撮影' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '画像を選ぶ' })).toBeInTheDocument()
+    for (const label of [
+      '表をカメラで撮影',
+      '表の画像ファイルを選択',
+      '裏をカメラで撮影',
+      '裏の画像ファイルを選択',
+    ]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument()
+    }
+    // 表・裏で 1 組ずつ = 2 組
+    expect(screen.getAllByRole('button', { name: 'カメラで撮影' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: '画像を選ぶ' })).toHaveLength(2)
+  })
+
+  it('裏面は任意であることが分かる', () => {
+    renderPage()
+    expect(screen.getByText('（任意）')).toBeInTheDocument()
   })
 })
 
@@ -313,7 +327,7 @@ describe('登録画面 / OCR 実行中', () => {
       settings: TEST_SETTINGS,
     })
     const file = new File(['fake'], 'card.jpg', { type: 'image/jpeg' })
-    fireEvent.change(screen.getByLabelText('画像ファイルを選択'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), { target: { files: [file] } })
     return stub
   }
 
@@ -329,11 +343,11 @@ describe('登録画面 / OCR 実行中', () => {
 
   it('OCR の進捗が % で表示される', async () => {
     const stub = await startOcr()
-    await screen.findByRole('progressbar', { name: 'OCR の進捗' })
+    await screen.findByRole('progressbar', { name: '表の OCR の進捗' })
 
     stub.progress(0.42)
     await waitFor(() => {
-      expect(screen.getByRole('progressbar', { name: 'OCR の進捗' })).toHaveAttribute(
+      expect(screen.getByRole('progressbar', { name: '表の OCR の進捗' })).toHaveAttribute(
         'aria-valuenow',
         '42',
       )
@@ -343,7 +357,7 @@ describe('登録画面 / OCR 実行中', () => {
     stub.finish({ text: '', lines: [] })
   })
 
-  it('OCR の結果がフォームに入る', async () => {
+  it('読み取った文字が行ごとにコピーできる形で出る', async () => {
     const stub = await startOcr()
     await screen.findByRole('button', { name: '読み取り中…' })
 
@@ -356,8 +370,129 @@ describe('登録画面 / OCR 実行中', () => {
       ],
     })
 
-    await waitFor(() => expect(screen.getByLabelText('会社名')).toHaveValue('株式会社サンプル'))
-    expect(screen.getByLabelText('氏名')).toHaveValue('山田 太郎')
-    expect(screen.getByLabelText('メール')).toHaveValue('taro.yamada@example.co.jp')
+    expect(await screen.findByText('読み取った文字')).toBeInTheDocument()
+    for (const line of ['株式会社サンプル', '山田 太郎', 'taro.yamada@example.co.jp']) {
+      expect(screen.getByRole('button', { name: new RegExp(line) })).toBeInTheDocument()
+    }
+  })
+
+  // 方針転換: どの欄に入れるかは推測しない（docs/spec.md 機能2）
+  it('読み取ってもフォームには自動で入らない', async () => {
+    const stub = await startOcr()
+    await screen.findByRole('button', { name: '読み取り中…' })
+
+    stub.finish({
+      text: '株式会社サンプル\n山田 太郎\ntaro.yamada@example.co.jp',
+      lines: [
+        { text: '株式会社サンプル' },
+        { text: '山田 太郎' },
+        { text: 'taro.yamada@example.co.jp' },
+      ],
+    })
+
+    await screen.findByText('読み取った文字')
+    for (const label of ['氏名', '会社名', 'メール', '電話', '部署', '役職']) {
+      expect(screen.getByLabelText(label)).toHaveValue('')
+    }
+  })
+
+  it('読み取った行をタップするとコピーできる', async () => {
+    const user = userEvent.setup()
+    const stub = await startOcr()
+    await screen.findByRole('button', { name: '読み取り中…' })
+
+    stub.finish({ text: '株式会社サンプル', lines: [{ text: '株式会社サンプル' }] })
+    const line = await screen.findByRole('button', { name: /株式会社サンプル/ })
+
+    await user.click(line)
+    await waitFor(async () => {
+      expect(await navigator.clipboard.readText()).toBe('株式会社サンプル')
+    })
+  })
+})
+
+describe('登録画面 / 表裏 2 枚の登録', () => {
+  function imageFile(name: string) {
+    return new File(['fake'], name, { type: 'image/jpeg' })
+  }
+
+  it('表と裏の両方を選ぶと 2 枚とも送信される', async () => {
+    const sent: string[] = []
+    server.use(
+      http.get(API, () =>
+        HttpResponse.json({
+          full_name: 'sample-user/namecard-data',
+          private: true,
+          default_branch: 'main',
+        }),
+      ),
+      http.post(`${API}/labels`, () => HttpResponse.json({ name: 'card' }, { status: 201 })),
+      http.put(`${API}/contents/cards/images/:year/:file`, ({ params }) => {
+        sent.push(String(params['file']))
+        return HttpResponse.json({ content: { path: 'x', sha: 'abc' } }, { status: 201 })
+      }),
+      http.post(`${API}/issues`, async ({ request }) => {
+        const body = (await request.json()) as { title: string; body: string; labels: string[] }
+        return HttpResponse.json({
+          number: 7,
+          title: body.title,
+          body: body.body,
+          state: 'open',
+          labels: [],
+          created_at: '2026-09-08T00:00:00Z',
+          updated_at: '2026-09-08T00:00:00Z',
+          html_url: `${API}/issues/7`,
+        })
+      }),
+    )
+
+    const stubProvider = {
+      recognize: () => Promise.resolve({ text: '', lines: [] }),
+      terminate: () => Promise.resolve(),
+    }
+    clearBranchCache()
+    renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={stubProvider} />, {
+      settings: TEST_SETTINGS,
+    })
+
+    const user = userEvent.setup()
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
+      target: { files: [imageFile('front.jpg')] },
+    })
+    await waitFor(() => expect(screen.getByAltText(/表/)).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('裏の画像ファイルを選択'), {
+      target: { files: [imageFile('back.jpg')] },
+    })
+    await waitFor(() => expect(screen.getByAltText(/裏/)).toBeInTheDocument())
+
+    await user.type(screen.getByLabelText('氏名'), '鈴木 一郎')
+    await user.click(screen.getByRole('button', { name: 'この内容で登録' }))
+
+    await waitFor(() => expect(sent).toHaveLength(2))
+    expect(sent.some((f) => f.includes('-back'))).toBe(true)
+  })
+
+  it('選んだ画像を外せる', async () => {
+    const user = userEvent.setup()
+    clearBranchCache()
+    renderWithProviders(
+      <NewCard
+        onCreated={vi.fn()}
+        ocrProvider={{
+          recognize: () => Promise.resolve({ text: '', lines: [] }),
+          terminate: () => Promise.resolve(),
+        }}
+      />,
+      { settings: TEST_SETTINGS },
+    )
+
+    fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
+      target: { files: [imageFile('front.jpg')] },
+    })
+    await waitFor(() => expect(screen.getByAltText(/表/)).toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '表を外す' }))
+    expect(screen.queryByAltText(/表/)).not.toBeInTheDocument()
   })
 })

@@ -5,7 +5,10 @@ import type { CardFields, YamlField } from './types'
 export const SCHEMA_MARKER = '<!-- namecard:v1 -->'
 const MEMO_HEADING = '## メモ'
 const IMAGE_HEADING = '## 名刺画像'
-const OCR_SUMMARY = 'OCR 生テキスト'
+const OCR_SUMMARY_FRONT = 'OCR 生テキスト（表）'
+const OCR_SUMMARY_BACK = 'OCR 生テキスト（裏）'
+/** v1 初期の本文は表裏の区別が無く、この summary だけを持っていた */
+const OCR_SUMMARY_LEGACY = 'OCR 生テキスト'
 
 /** 氏名が空でもタイトルは作れるようにする（docs/architecture.md） */
 export const NAME_PLACEHOLDER = '(氏名未入力)'
@@ -59,25 +62,23 @@ export function serializeIssueBody(fields: CardFields, ctx: ImageUrlContext): st
   if (memo) sections.push('', MEMO_HEADING, '', memo)
 
   const image = fields.image.trim()
-  if (image) {
-    sections.push('', IMAGE_HEADING, '', `![名刺](${buildImageUrl(image, ctx)})`)
+  const imageBack = fields.imageBack.trim()
+  if (image || imageBack) {
+    sections.push('', IMAGE_HEADING, '')
+    if (image) sections.push(`![名刺（表）](${buildImageUrl(image, ctx)})`)
+    if (imageBack) sections.push(`![名刺（裏）](${buildImageUrl(imageBack, ctx)})`)
   }
 
-  const ocrText = fields.ocrText.trim()
-  if (ocrText) {
-    sections.push(
-      '',
-      `<details><summary>${OCR_SUMMARY}</summary>`,
-      '',
-      '```text',
-      ocrText,
-      '```',
-      '',
-      '</details>',
-    )
-  }
+  sections.push(...ocrSection(fields.ocrText, OCR_SUMMARY_FRONT))
+  sections.push(...ocrSection(fields.ocrTextBack, OCR_SUMMARY_BACK))
 
   return `${sections.join('\n')}\n`
+}
+
+function ocrSection(text: string, summary: string): string[] {
+  const trimmed = text.trim()
+  if (!trimmed) return []
+  return ['', `<details><summary>${summary}</summary>`, '', '```text', trimmed, '```', '', '</details>']
 }
 
 /**
@@ -105,7 +106,11 @@ export function parseIssueBody(body: string | null): CardFields {
   }
 
   fields.memo = extractMemo(normalized)
-  fields.ocrText = extractOcrText(normalized)
+
+  const ocrBlocks = extractDetailsBlocks(normalized)
+  // 表裏の区別が無い旧形式（summary が「OCR 生テキスト」だけ）は表として読む
+  fields.ocrText = ocrBlocks.get(OCR_SUMMARY_FRONT) ?? ocrBlocks.get(OCR_SUMMARY_LEGACY) ?? ''
+  fields.ocrTextBack = ocrBlocks.get(OCR_SUMMARY_BACK) ?? ''
 
   return fields
 }
@@ -119,10 +124,20 @@ function extractMemo(body: string): string {
   return (end === -1 ? after : after.slice(0, end)).trim()
 }
 
-function extractOcrText(body: string): string {
-  const match = body.match(/<details><summary>[^<]*<\/summary>\n([\s\S]*?)<\/details>/)
-  if (!match?.[1]) return ''
-  const inner = match[1]
-  const fenced = inner.match(/```(?:text)?\n([\s\S]*?)\n?```/)
-  return (fenced?.[1] ?? inner).trim()
+/**
+ * 本文中のすべての details ブロックを summary → 中身の Map にする。
+ * 表裏で 2 つ並ぶので、最初の 1 つだけを取る実装にすると裏が読めなくなる。
+ */
+function extractDetailsBlocks(body: string): Map<string, string> {
+  const blocks = new Map<string, string>()
+  const pattern = /<details><summary>([^<]*)<\/summary>\n([\s\S]*?)<\/details>/g
+
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(body)) !== null) {
+    const summary = (match[1] ?? '').trim()
+    const inner = match[2] ?? ''
+    const fenced = inner.match(/```(?:text)?\n([\s\S]*?)\n?```/)
+    blocks.set(summary, (fenced?.[1] ?? inner).trim())
+  }
+  return blocks
 }

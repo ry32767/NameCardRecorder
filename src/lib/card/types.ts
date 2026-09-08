@@ -15,12 +15,16 @@ export interface CardFields {
   /** YYYY-MM-DD。既定は登録日 */
   metOn: string
   metAt: string
-  /** リポジトリ内の相対パス。例: cards/images/2026/20260908-013a.jpg */
+  /** 表面画像のリポジトリ内相対パス。例: cards/images/2026/20260908-013a.jpg */
   image: string
+  /** 裏面画像。任意（1 枚だけの登録も普通にある） */
+  imageBack: string
   tags: string[]
   memo: string
-  /** OCR の生テキスト。本文の details に畳んで残す */
+  /** 表面の OCR 生テキスト。本文の details に畳んで残す */
   ocrText: string
+  /** 裏面の OCR 生テキスト */
+  ocrTextBack: string
 }
 
 /** YAML ブロックに書き出す単一値フィールド（順序もこの通りに保つ） */
@@ -40,6 +44,7 @@ export const YAML_FIELDS = [
   'metOn',
   'metAt',
   'image',
+  'imageBack',
 ] as const
 
 export type YamlField = (typeof YAML_FIELDS)[number]
@@ -61,9 +66,11 @@ export function emptyCardFields(): CardFields {
     metOn: '',
     metAt: '',
     image: '',
+    imageBack: '',
     tags: [],
     memo: '',
     ocrText: '',
+    ocrTextBack: '',
   }
 }
 
