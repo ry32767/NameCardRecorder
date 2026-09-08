@@ -1,11 +1,20 @@
 import { createWorker } from 'tesseract.js'
-import type { OcrLine, OcrProgress, OcrProvider, OcrResult } from './types'
+import type { OcrLine, OcrPhase, OcrProgress, OcrProvider, OcrResult } from './types'
+
+/**
+ * tesseract.js の status を段階に振り分ける。
+ * 言語データの取得（初回だけ 10MB 超）と認識を、画面で言い分けるために使う。
+ */
+export function phaseFor(status: string): OcrPhase {
+  return status.includes('recognizing') ? 'recognize' : 'model'
+}
 
 /**
  * Tesseract.js による OcrProvider 実装。
  *
  * tesseract.js は内部で Web Worker を立てるので、認識中もメインスレッドは止まらない
  * （docs/spec.md 機能1「OCR 中も画面が固まらない」）。
+ * 既定は PaddleOCR で、こちらは軽い方の選択肢として残している。
  * 言語データ（jpn+eng）は CDN から取得する。**画像は外に出ない** — 送るのではなく、
  * 辞書を取ってきてブラウザ内で処理する（docs/architecture.md のプライバシー前提）。
  */
@@ -15,7 +24,11 @@ export class TesseractOcrProvider implements OcrProvider {
   private getWorker(onProgress?: (progress: OcrProgress) => void) {
     this.workerPromise ??= createWorker(['jpn', 'eng'], undefined, {
       logger: (message: { status: string; progress: number }) => {
-        onProgress?.({ status: message.status, progress: message.progress })
+        onProgress?.({
+          status: message.status,
+          progress: message.progress,
+          phase: phaseFor(message.status),
+        })
       },
     })
     return this.workerPromise

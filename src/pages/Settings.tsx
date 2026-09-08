@@ -6,12 +6,28 @@ import { TextField } from '../components/TextField'
 import { fetchRepo } from '../lib/github/repo'
 import { GithubError } from '../lib/github/errors'
 import {
+  DEFAULT_OCR_ENGINE,
   REPOSITORY_FORMAT_MESSAGE,
   isValidRepository,
   maskToken,
   parseRepository,
 } from '../lib/settings'
+import { ENGINE_LABELS } from '../lib/ocr/engine'
 import { useSettings } from '../store/settingsContext'
+import type { OcrEngine } from '../lib/ocr/engine'
+import type { Settings as SettingsValue } from '../lib/settings'
+
+/** OCR エンジンの選択肢。どちらもブラウザ内で完結する（画像は端末から出ない） */
+const OCR_ENGINE_CHOICES: { engine: OcrEngine; hint: string }[] = [
+  {
+    engine: 'paddle',
+    hint: '日本語の精度が高い。初回だけモデル（約 21MB）を取得します',
+  },
+  {
+    engine: 'tesseract',
+    hint: '取得するデータが小さく、非力な端末でも動きます。精度は落ちます',
+  },
+]
 
 export const CONNECTED_MESSAGE = '接続できました'
 export const TOKEN_REQUIRED_MESSAGE = 'アクセストークンを入力してください'
@@ -27,27 +43,27 @@ export function Settings() {
   const [testing, setTesting] = useState(false)
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [editingToken, setEditingToken] = useState(!settings?.token)
-  const [editingVisionKey, setEditingVisionKey] = useState(!settings?.visionApiKey)
+  /**
+   * OCR の設定は、リポジトリ・トークンと同じく画面側に持つ。
+   * **設定を保存する前（初回）でも選べるようにするため** — 保存済みの値だけを見ていると、
+   * まだ設定が無い利用者がラジオを押しても何も起きない。
+   */
+  const [ocrEngine, setOcrEngine] = useState<OcrEngine>(settings?.ocrEngine ?? DEFAULT_OCR_ENGINE)
+  const [showOcrText, setShowOcrText] = useState(settings?.showOcrText ?? true)
 
   /**
    * トークンは state に持たず、非制御の input から必要なときだけ読む。
    * React が value を DOM に書き戻さないので、保存済みトークンが属性に現れない
-   * （docs/spec.md 機能0 / DESIGN.md 不変条件 7）。Vision の API キーも同じ扱いにする。
+   * （docs/spec.md 機能0 / DESIGN.md 不変条件 7）。
    */
   const tokenRef = useRef<HTMLInputElement>(null)
-  const visionKeyRef = useRef<HTMLInputElement>(null)
 
   function readToken(): string {
     const typed = tokenRef.current?.value.trim() ?? ''
     return typed || settings?.token || ''
   }
 
-  function readVisionKey(): string {
-    const typed = visionKeyRef.current?.value.trim() ?? ''
-    return typed || settings?.visionApiKey || ''
-  }
-
-  function validate(): { repository: string; token: string; visionApiKey: string } | null {
+  function validate(): SettingsValue | null {
     setResult(null)
     if (!isValidRepository(repository)) {
       setRepositoryError(REPOSITORY_FORMAT_MESSAGE)
@@ -60,7 +76,7 @@ export function Settings() {
       setResult({ tone: 'error', message: TOKEN_REQUIRED_MESSAGE })
       return null
     }
-    return { repository: repository.trim(), token, visionApiKey: readVisionKey() }
+    return { repository: repository.trim(), token, ocrEngine, showOcrText }
   }
 
   function handleSave() {
@@ -68,19 +84,20 @@ export function Settings() {
     if (!valid) return
     save(valid)
     if (tokenRef.current) tokenRef.current.value = ''
-    if (visionKeyRef.current) visionKeyRef.current.value = ''
     setEditingToken(false)
-    setEditingVisionKey(!valid.visionApiKey)
     setResult({ tone: 'success', message: '設定を保存しました' })
   }
 
-  /** Cloud Vision をやめてブラウザ内 OCR に戻す。キーはこの端末から消える */
-  function handleRemoveVisionKey() {
-    if (!settings) return
-    if (visionKeyRef.current) visionKeyRef.current.value = ''
-    save({ ...settings, visionApiKey: '' })
-    setEditingVisionKey(true)
-    setResult({ tone: 'success', message: 'API キーを消し、ブラウザ内の OCR に戻しました' })
+  /**
+   * OCR の設定は「保存」を待たずにその場で効かせる。
+   * リポジトリ・トークンと違って検証するものが無く、次の読み取りから使う値なので
+   * （spec 17: エンジンを変えたら次回の OCR から新しい方を使う）。
+   */
+  function updateOcr(patch: Partial<Pick<SettingsValue, 'ocrEngine' | 'showOcrText'>>) {
+    if (patch.ocrEngine !== undefined) setOcrEngine(patch.ocrEngine)
+    if (patch.showOcrText !== undefined) setShowOcrText(patch.showOcrText)
+    // まだ設定が無いなら、リポジトリ・トークンと一緒に「保存」で残る
+    if (settings) save({ ...settings, ...patch })
   }
 
   async function handleTest() {
@@ -115,11 +132,11 @@ export function Settings() {
     await clear()
     setRepository('')
     setRepositoryError(null)
+    setOcrEngine(DEFAULT_OCR_ENGINE)
+    setShowOcrText(true)
     setConfirmingClear(false)
     setEditingToken(true)
-    setEditingVisionKey(true)
     if (tokenRef.current) tokenRef.current.value = ''
-    if (visionKeyRef.current) visionKeyRef.current.value = ''
     setResult({ tone: 'success', message: '設定とローカルキャッシュを消去しました' })
   }
 
@@ -199,60 +216,62 @@ export function Settings() {
         <section className="mt-8 rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
           <h2 className="text-title font-bold text-ink">文字認識（OCR）</h2>
           <p className="mt-1 text-base text-ink-soft">
-            既定はこの端末のブラウザ内で読み取ります（画像は外に出ませんが、精度は高くありません）。
-            <strong className="font-bold text-ink">Google Cloud Vision の API キー</strong>
-            を入れると精度の高い読み取りに切り替わります。
+            どちらも<strong className="font-bold text-ink">この端末のブラウザの中だけ</strong>
+            で読み取ります。名刺の画像が OCR サービスへ送られることはありません
+            （取得するのは読み取り用のモデルだけです）。
           </p>
-          <p className="mt-2 text-meta text-vermilion">
-            キーを入れている間は、<strong className="font-bold">名刺の画像が Google に送信されます。</strong>
-            無料枠を超えると課金されます。
-          </p>
+
+          <fieldset className="mt-4">
+            <legend className="mb-1 text-meta font-bold text-ink-soft">OCR エンジン</legend>
+            <div className="space-y-2">
+              {OCR_ENGINE_CHOICES.map(({ engine, hint }) => (
+                <label
+                  key={engine}
+                  className="flex min-h-tap cursor-pointer items-start gap-3 rounded-control border border-rule px-3 py-2"
+                >
+                  <input
+                    type="radio"
+                    name="ocrEngine"
+                    className="mt-1 h-5 w-5 accent-indigo"
+                    value={engine}
+                    checked={ocrEngine === engine}
+                    onChange={() => updateOcr({ ocrEngine: engine })}
+                  />
+                  <span>
+                    <span className="block text-base font-bold text-ink">{ENGINE_LABELS[engine]}</span>
+                    <span className="block text-meta text-ink-faint">{hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-1 text-meta text-ink-faint">
+              変えたときは、次に読み取る名刺から新しい方を使います。
+            </p>
+          </fieldset>
 
           <div className="mt-4">
-            <span className="mb-1 block text-meta font-bold text-ink-soft">
-              Cloud Vision の API キー
-              <span className="ml-1 text-ink-faint">（任意）</span>
-            </span>
-
-            {settings?.visionApiKey && !editingVisionKey ? (
-              <div className="flex flex-wrap items-center gap-3">
-                {/* 実値ではなく伏せ字だけを描く */}
-                <output className="font-mono text-base text-ink-soft">
-                  {maskToken(settings.visionApiKey)}
-                </output>
-                <Button onClick={() => setEditingVisionKey(true)}>キーを変更</Button>
-                <Button variant="danger" onClick={handleRemoveVisionKey}>
-                  キーを消す
-                </Button>
-              </div>
-            ) : (
-              <>
-                <input
-                  ref={visionKeyRef}
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="AIza…"
-                  aria-label="Cloud Vision の API キー"
-                  className="min-h-tap w-full rounded-control border border-rule-strong bg-card px-3 py-2 font-mono text-base text-ink placeholder:text-ink-faint"
-                />
-                <p className="mt-1 text-meta text-ink-faint">
-                  Google Cloud で Cloud Vision API を有効にし、課金を設定して発行したキーを貼り、「保存」を押してください。
-                  キーはブラウザから送るため URL に載ります。Google Cloud 側で
-                  <strong className="font-bold text-ink">HTTP リファラー制限</strong>
-                  （<span className="font-mono">https://ry32767.github.io/*</span>
-                  のように<strong className="font-bold text-ink">パスを含めない</strong>形。ブラウザはオリジンまでしか送りません）
-                  を掛け、用途を Cloud Vision API だけに絞ってください。空のままなら Cloud Vision は使いません。
-                </p>
-              </>
-            )}
+            <label className="flex min-h-tap cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-5 w-5 accent-indigo"
+                checked={showOcrText}
+                onChange={(event) => updateOcr({ showOcrText: event.target.checked })}
+              />
+              <span>
+                <span className="block text-base font-bold text-ink">認識テキストを画像上に表示</span>
+                <span className="block text-meta text-ink-faint">
+                  読み取った文字を名刺画像の上に重ね、押すとコピーできるようにします。
+                  OFF にしても読み取り自体は行い、結果はフォームに入ります。
+                </span>
+              </span>
+            </label>
           </div>
         </section>
 
         <section className="mt-8 rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
           <h2 className="text-title font-bold text-ink">設定を消去</h2>
           <p className="mt-1 text-base text-ink-soft">
-            この端末に保存されたトークン・API キー・リポジトリ設定・一覧のキャッシュをすべて消します。
+            この端末に保存されたトークン・リポジトリ設定・OCR の設定・一覧のキャッシュをすべて消します。
             GitHub 側の名刺データは消えません。
           </p>
 

@@ -8,7 +8,8 @@ import type { Settings } from '../lib/settings'
 export const TEST_SETTINGS: Settings = {
   repository: 'sample-user/namecard-data',
   token: 'ghp_testtoken0000',
-  visionApiKey: '',
+  ocrEngine: 'paddle',
+  showOcrText: true,
 }
 
 /** 設定済み／未設定の両方を同じ書き方で組めるようにする */

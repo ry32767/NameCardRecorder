@@ -9,7 +9,7 @@ import { Notice } from '../components/Notice'
 import { toOverlayLines } from '../lib/ocr/overlay'
 import { copyText } from '../lib/clipboard'
 import { ImageLoadError, prepareImage } from '../lib/ocr/image'
-import { createOcrProvider, engineFor, ocrInputBlob } from '../lib/ocr/engine'
+import { ENGINE_LABELS, createOcrProvider, engineFor, ocrInputBlob } from '../lib/ocr/engine'
 import { parseOcrLines } from '../lib/ocr/parser'
 import { createCard } from '../lib/github/createCard'
 import { emptyCardFields } from '../lib/card/types'
@@ -20,12 +20,16 @@ import type { CardSide } from '../lib/cardSide'
 import type { PreparedImage } from '../lib/ocr/image'
 import type { Card, CardFields } from '../lib/card/types'
 import type { CardFieldErrors } from '../lib/card/validate'
-import type { OcrProvider } from '../lib/ocr/types'
+import type { OcrEngine } from '../lib/ocr/engine'
+import type { OcrPhase, OcrProvider } from '../lib/ocr/types'
 
 type SideMap<T> = Record<CardSide, T>
 
 export const COPIED_MESSAGE = 'コピーしました'
 export const COPY_FAILED_MESSAGE = 'コピーできませんでした。下の欄から手で選択してください'
+
+/** コピーの知らせは読めれば十分なので、少し置いて自分で消える（spec 8.2） */
+const COPIED_MESSAGE_MS = 2000
 
 const NO_SIDES: SideMap<null> = { front: null, back: null }
 const NO_OVERLAYS: SideMap<OverlayLine[]> = { front: [], back: [] }
@@ -35,11 +39,11 @@ export function NewCard({
   ocrProvider,
 }: {
   onCreated: (card: Card) => void
-  /** テストや将来のクラウド OCR 差し替え用。既定は Tesseract */
+  /** テストや OCR の差し替え用。既定は設定で選んだエンジン（既定は PaddleOCR） */
   ocrProvider?: OcrProvider
 }) {
   const navigate = useNavigate()
-  const { settings, repoRef } = useSettings()
+  const { settings, repoRef, save: saveSettings } = useSettings()
 
   const [fields, setFields] = useState<CardFields>(() => ({
     ...emptyCardFields(),
@@ -49,6 +53,11 @@ export function NewCard({
   const [saving, setSaving] = useState(false)
   const [readingSide, setReadingSide] = useState<CardSide | null>(null)
   const [progress, setProgress] = useState(0)
+  const [phase, setPhase] = useState<OcrPhase>('recognize')
+  /** 読み取りに失敗した面。ここに軽い方のエンジンで読み直す入口を出す（spec 22） */
+  const [fallbackSide, setFallbackSide] = useState<CardSide | null>(null)
+  /** 認識テキストを画像に重ねるか。OFF にしても読み取り結果は捨てない（spec 9） */
+  const [showOcrText, setShowOcrText] = useState(settings?.showOcrText ?? true)
   const [images, setImages] = useState<SideMap<PreparedImage | null>>(NO_SIDES)
   const [overlays, setOverlays] = useState<SideMap<OverlayLine[]>>(NO_OVERLAYS)
   const [side, setSide] = useState<CardSide>('front')
@@ -56,7 +65,8 @@ export function NewCard({
   /** コピーに失敗した文字列。手で選択できる欄に出す */
   const [failedCopy, setFailedCopy] = useState<string | null>(null)
 
-  const providerRef = useRef<OcrProvider | null>(ocrProvider ?? null)
+  /** エンジンごとに使い回す。切り替えても、前に立てた Worker を捨てずに済む */
+  const providersRef = useRef<Partial<Record<OcrEngine, OcrProvider>>>({})
   const failedCopyRef = useRef<HTMLInputElement>(null)
   const imagesRef = useRef<SideMap<PreparedImage | null>>(NO_SIDES)
 
@@ -73,11 +83,13 @@ export function NewCard({
 
   // 画面を離れるとき、Worker とプレビュー URL を必ず片付ける
   useEffect(() => {
+    const providers = providersRef.current
     return () => {
       for (const image of Object.values(imagesRef.current)) {
         if (image) URL.revokeObjectURL(image.previewUrl)
       }
-      if (!ocrProvider) void providerRef.current?.terminate()
+      if (ocrProvider) return
+      for (const provider of Object.values(providers)) void provider.terminate()
     }
   }, [ocrProvider])
 
@@ -101,7 +113,13 @@ export function NewCard({
     const current = imagesRef.current[target]
     if (current) URL.revokeObjectURL(current.previewUrl)
     setImages((prev) => ({ ...prev, [target]: null }))
+    clearSideResult(target)
+  }
+
+  /** 画像は残したまま、その面の読み取り結果だけを捨てる */
+  function clearSideResult(target: CardSide) {
     setOverlays((prev) => ({ ...prev, [target]: [] }))
+    setFallbackSide(null)
     setFields((current) =>
       target === 'front' ? { ...current, ocrText: '' } : { ...current, ocrTextBack: '' },
     )
@@ -111,7 +129,12 @@ export function NewCard({
     setMessage(null)
     if (await copyText(text)) {
       setFailedCopy(null)
-      setMessage({ tone: 'info', text: COPIED_MESSAGE })
+      setMessage({ tone: 'info', text: `${COPIED_MESSAGE}「${text}」` })
+      // 次のコピーの結果と混ざらないよう、この知らせだけを消す
+      window.setTimeout(
+        () => setMessage((current) => (current?.text.startsWith(COPIED_MESSAGE) ? null : current)),
+        COPIED_MESSAGE_MS,
+      )
       return
     }
     // 黙って失敗させない。手で選択できる欄を出す
@@ -140,21 +163,28 @@ export function NewCard({
     setImages((prev) => ({ ...prev, [target]: prepared }))
     // 前の画像の読み取り結果をここで捨てる。残すと、新しい画像の上に古い座標で
     // 文字が重なり、読み取りに失敗した場合は古い生テキストのまま登録されてしまう
-    setOverlays((prev) => ({ ...prev, [target]: [] }))
-    setFields((current) =>
-      target === 'front' ? { ...current, ocrText: '' } : { ...current, ocrTextBack: '' },
-    )
+    clearSideResult(target)
     setSide(target)
+
+    await runOcr(target, prepared, engineFor(settings))
+  }
+
+  /** 1 面を読み取ってフォームと重ね表示に反映する。読み直しからも呼ぶ */
+  async function runOcr(target: CardSide, prepared: PreparedImage, engine: OcrEngine) {
+    setMessage(null)
+    setFallbackSide(null)
+    setProgress(0)
+    setPhase('model')
     setReadingSide(target)
 
-    const engine = engineFor(settings)
     try {
-      // OCR の実装は重いので、実際に読み取るときまで読み込まない（初期表示を軽く保つ）
-      providerRef.current ??= await createOcrProvider(engine, settings)
-      const result = await providerRef.current.recognize(
-        ocrInputBlob(engine, prepared),
-        (update) => setProgress(Math.round(update.progress * 100)),
-      )
+      // OCR の実装もモデルも重いので、実際に読み取るときまで読み込まない
+      // （スマホで開いただけのときに何も落ちてこないようにするための肝）
+      const provider = ocrProvider ?? (providersRef.current[engine] ??= await createOcrProvider(engine))
+      const result = await provider.recognize(ocrInputBlob(engine, prepared), (update) => {
+        setProgress(Math.round(update.progress * 100))
+        setPhase(update.phase)
+      })
 
       setOverlays((prev) => ({ ...prev, [target]: toOverlayLines(result.lines) }))
       // 項目の振り分けは表だけから行う。裏は連絡先の続きや英語表記のことが多く、
@@ -166,29 +196,38 @@ export function NewCard({
       )
     } catch (error) {
       // OCR が失敗しても、手入力で登録できる状態にはする。
-      // Cloud Vision のキー・課金の問題はここでしか気づけないので、理由をそのまま見せる
+      // PaddleOCR はモデルの取得で落ちうるので、理由をそのまま見せて軽い方への逃げ道を出す
+      const paddleFailed = error instanceof Error && error.name === 'PaddleOcrError'
+      if (paddleFailed && engine === 'paddle') setFallbackSide(target)
       setMessage({
         tone: 'info',
-        text:
-          error instanceof Error && error.name === 'VisionOcrError'
-            ? `${error.message}（フォームに直接入力して登録できます）`
-            : `${SIDE_LABELS[target]}の文字を読み取れませんでした。フォームに直接入力して登録できます。`,
+        text: paddleFailed
+          ? `${error.message}。フォームに直接入力して登録できます`
+          : `${SIDE_LABELS[target]}の文字を読み取れませんでした。フォームに直接入力して登録できます。`,
       })
     } finally {
       setReadingSide(null)
     }
   }
 
-  async function handleSave() {
+  /** 重ね表示の ON/OFF。読み取り直しはしない（spec 9） */
+  function toggleOcrText() {
+    const next = !showOcrText
+    setShowOcrText(next)
+    if (settings) saveSettings({ ...settings, showOcrText: next })
+  }
+
+  // 一覧に戻る保存／その場で続けて次の 1 枚を登録する保存の両方から使う共通処理
+  async function save(): Promise<Card | null> {
     const found = validateCard(fields)
     setErrors(found)
-    if (hasErrors(found)) return
+    if (hasErrors(found)) return null
     if (!repoRef) {
       setMessage({
         tone: 'error',
         text: '設定が未完了です。設定画面でリポジトリとトークンを入力してください',
       })
-      return
+      return null
     }
 
     setSaving(true)
@@ -200,14 +239,21 @@ export function NewCard({
         ...(images.back ? { imageBackBase64: images.back.storageBase64 } : {}),
       })
       onCreated(card)
-      navigate('/', { replace: true })
+      return card
     } catch (error) {
-      setSaving(false)
       setMessage({
         tone: 'error',
         text: error instanceof Error ? error.message : '登録に失敗しました。もう一度お試しください',
       })
+      return null
+    } finally {
+      setSaving(false)
     }
+  }
+
+  async function handleSave() {
+    const card = await save()
+    if (card) navigate('/', { replace: true })
   }
 
   const reading = readingSide !== null
@@ -224,6 +270,9 @@ export function NewCard({
           onFlip={() => setSide(otherSide(side))}
           readingSide={readingSide}
           progress={progress}
+          phase={phase}
+          showOcrText={showOcrText}
+          onToggleOcrText={toggleOcrText}
           onFile={handleFile}
           onClear={clearSide}
           onCopy={(text) => void handleCopy(text)}
@@ -232,6 +281,21 @@ export function NewCard({
         {message ? (
           <div className="mt-4">
             <Notice tone={message.tone === 'error' ? 'error' : 'info'}>{message.text}</Notice>
+          </div>
+        ) : null}
+
+        {/* PaddleOCR のモデルを取れなかったときの逃げ道。軽い方なら通ることがある（spec 22） */}
+        {fallbackSide ? (
+          <div className="mt-2">
+            <Button
+              onClick={() => {
+                const image = imagesRef.current[fallbackSide]
+                if (image) void runOcr(fallbackSide, image, 'tesseract')
+              }}
+              disabled={reading}
+            >
+              {ENGINE_LABELS.tesseract}で読み直す
+            </Button>
           </div>
         ) : null}
 

@@ -6,7 +6,8 @@ import type { Settings } from '../settings'
 const BASE: Settings = {
   repository: 'sample-user/namecard-data',
   token: 'ghp_dummy',
-  visionApiKey: '',
+  ocrEngine: 'paddle',
+  showOcrText: true,
 }
 
 const IMAGE = {
@@ -19,13 +20,13 @@ const IMAGE = {
 } satisfies PreparedImage
 
 describe('engineFor', () => {
-  it('既定はブラウザ内の Tesseract（画像を外に出さない）', () => {
-    expect(engineFor(BASE)).toBe('tesseract')
-    expect(engineFor(null)).toBe('tesseract')
+  it('既定は PaddleOCR（設定が無い端末でも同じ）', () => {
+    expect(engineFor(BASE)).toBe('paddle')
+    expect(engineFor(null)).toBe('paddle')
   })
 
-  it('API キーが入っているときだけ Cloud Vision を使う', () => {
-    expect(engineFor({ ...BASE, visionApiKey: 'AIza_dummy' })).toBe('vision')
+  it('設定で選んだエンジンをそのまま使う', () => {
+    expect(engineFor({ ...BASE, ocrEngine: 'tesseract' })).toBe('tesseract')
   })
 })
 
@@ -34,7 +35,7 @@ describe('ocrInputBlob', () => {
     expect(ocrInputBlob('tesseract', IMAGE)).toBe(IMAGE.ocrBlob)
   })
 
-  it('Vision には前処理していないカラーの方を渡す', () => {
-    expect(ocrInputBlob('vision', IMAGE)).toBe(IMAGE.storageBlob)
+  it('PaddleOCR には前処理していないカラーの方を渡す', () => {
+    expect(ocrInputBlob('paddle', IMAGE)).toBe(IMAGE.storageBlob)
   })
 })

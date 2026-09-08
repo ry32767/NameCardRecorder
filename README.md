@@ -10,7 +10,7 @@ NameCardRecorder は、名刺を撮影 → 文字認識 → 内容を確認し�
 ## 主な機能
 
 - **撮影して登録** — カメラまたは画像ファイルから名刺を**表・裏の 2 枚まで**読み込み、OCR で文字を検出。氏名・会社名・連絡先を自動で拾って確認フォームに入れるので、直してから登録する。読み取った行は**名刺画像の上に重ねて表示**され、押すとその行だけをコピーできる。
-- **OCR は選べる** — 既定はブラウザ内で完結（画像は端末から出ない）。設定に Google Cloud Vision の API キーを入れると、精度の高い読み取りに切り替わる（**そのとき名刺画像は Google に送信される**・無料枠を超えると課金）。
+- **OCR は選べる** — PaddleOCR（既定・日本語に強い）と Tesseract.js（軽量）。**どちらもブラウザ内で完結し、名刺の画像は端末から出ない**。
 - **一覧・検索・絞り込み・並べ替え** — 登録済みの名刺をカード形式で一覧表示。氏名・会社・メモの全文検索と、会社／イベント／タグのラベル絞り込み。出会った日・出会った場所・会社名・氏名（ふりがな順）で並べ替えられる。
 - **GitHub がそのまま台帳** — 1 枚の名刺 = 1 Issue。アプリを開かなくても GitHub の画面から閲覧・検索・編集でき、変更履歴も残る。
 - **PC / スマホ両対応** — 同じ URL をどちらから開いても使えるレスポンシブ設計。
@@ -20,7 +20,7 @@ NameCardRecorder は、名刺を撮影 → 文字認識 → 内容を確認し�
 ## 技術スタック
 
 - **フロントエンド**: React 18 + TypeScript + Vite + Tailwind CSS
-- **OCR**: Tesseract.js（`jpn` + `eng`、ブラウザ内で完結・無料）
+- **OCR**: PaddleOCR（PP-OCRv5 日本語モデル / ONNX Runtime Web）または Tesseract.js（`jpn` + `eng`）。どちらもブラウザ内で完結・無料
 - **データ**: GitHub REST API（別リポジトリの Issues と `cards/images/`）
 - **認証**: GitHub Fine-grained Personal Access Token（ブラウザの localStorage に保存）
 - **デプロイ**: GitHub Pages（GitHub Actions で自動ビルド）
@@ -54,7 +54,7 @@ NameCardRecorder/
 │   ├── components/        # UI 部品（Button / TextField / CardTile / …）
 │   ├── lib/
 │   │   ├── github/        # GitHub API クライアント（Issues / Contents / Labels）
-│   │   ├── ocr/           # 画像前処理・Tesseract 実行
+│   │   ├── ocr/           # 画像前処理・OCR 実行（PaddleOCR / Tesseract）・項目抽出
 │   │   ├── card/          # Issue 本文の serialize / parse・検証・ラベル
 │   │   ├── search.ts      # 検索と絞り込み
 │   │   ├── settings.ts    # 設定の保存とトークンのマスク
@@ -86,24 +86,21 @@ GitHub の Settings → Developer settings → Personal access tokens → **Fine
 | Contents | Read and write | 名刺画像のコミット |
 | Metadata | Read-only | （自動で付く） |
 
-### 番外：OCR に Cloud Vision を使う（任意）
+### 番外：文字認識（OCR）の設定
 
-既定の文字認識はブラウザ内で完結する代わりに、日本語の精度はあまり高くない。精度を上げたい場合は
-Google Cloud Vision を使える。
+OCR は**この端末のブラウザの中だけ**で動く。名刺の画像が OCR サービスに送られることはない。
+設定画面の「文字認識（OCR）」で、次の 2 つを選べる。
 
-1. Google Cloud でプロジェクトを作り、**Cloud Vision API を有効化**して課金を設定する
-2. API キーを発行し、**キーの制限**を掛ける
-   - アプリケーションの制限: **HTTP リファラー**に `https://<user>.github.io/*`（開発中は `http://localhost:5173/*` も足す）
-   - API の制限: **Cloud Vision API だけ**
+| エンジン | 精度 | 初回に取得するデータ |
+|---|---|---|
+| **PaddleOCR**（既定） | 日本語に強い | 約 21MB のモデル |
+| Tesseract.js | 落ちる | 10–15MB の言語データ |
 
-   > **パスを含めないこと。** ブラウザが外部への `fetch` に付ける `Referer` は、既定の Referrer-Policy
-   > （`strict-origin-when-cross-origin`）では**オリジンだけ**（`https://<user>.github.io/`）になり、
-   > `/NameCardRecorder/` の部分は送られない。パス付きで制限すると一致せず 403 になる。
-3. アプリの設定画面「文字認識（OCR）」にキーを貼って保存する
+どちらも初回だけデータの取得が入る（2 回目以降はブラウザのキャッシュが効く）。
+非力な端末や、モデルを取得できない環境では Tesseract.js に切り替えるとよい。
 
-> **注意**: このキーを設定している間、**名刺の画像は Google に送信される**（既定では端末から出ない）。
-> 無料枠（月 1,000 ユニット）を超えると課金される。キーはブラウザから送るため URL に載るので、
-> 上のキー制限は必ず掛けること。設定画面の「キーを消す」でいつでもブラウザ内 OCR に戻せる。
+同じ画面で「認識テキストを画像上に表示」も切り替えられる。OFF にしても読み取り自体は行い、
+結果はフォームに入る。
 
 ### 3. アプリを動かす
 

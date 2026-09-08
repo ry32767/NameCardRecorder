@@ -48,7 +48,8 @@ describe('設定画面 / 入力と保存', () => {
       expect(loadSettings()).toEqual({
         repository: 'sample-user/namecard-data',
         token: 'ghp_dummy',
-        visionApiKey: '',
+        ocrEngine: 'paddle',
+        showOcrText: true,
       })
     })
   })
@@ -154,50 +155,49 @@ describe('設定画面 / 設定を消去', () => {
   })
 })
 
-describe('設定画面 / Cloud Vision の API キー', () => {
-  const WITH_KEY = { ...TEST_SETTINGS, visionApiKey: 'AIza_dummy_key_0000' }
+describe('設定画面 / 文字認識（OCR）', () => {
+  it('どちらのエンジンでも画像が端末から出ないことを明示している', () => {
+    renderWithProviders(<Settings />, { settings: TEST_SETTINGS })
 
-  it('画像が Google に送られることを、キーを入れる場所で明示している', () => {
-    renderWithProviders(<Settings />)
-    expect(screen.getByText(/名刺の画像が Google に送信されます/)).toBeInTheDocument()
-    expect(screen.getByLabelText('Cloud Vision の API キー')).toHaveAttribute('type', 'password')
+    expect(screen.getByText(/名刺の画像が OCR サービスへ送られることはありません/)).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /PaddleOCR（推奨）/ })).toBeChecked()
   })
 
-  it('キーを入れて保存すると、次からその設定で読み取る', async () => {
-    renderWithProviders(<Settings />)
-    const user = await fillForm('sample-user/namecard-data', 'ghp_dummy')
-    await user.type(screen.getByLabelText('Cloud Vision の API キー'), 'AIza_dummy')
-    await user.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => expect(loadSettings()?.visionApiKey).toBe('AIza_dummy'))
-  })
-
-  it('保存済みのキーはマスク表示され、DOM の属性にも現れない', () => {
-    const { container } = renderWithProviders(<Settings />, { settings: WITH_KEY })
-
-    expect(screen.getByText(/^AIza\*+$/)).toBeInTheDocument()
-    for (const element of container.querySelectorAll('*')) {
-      for (const attribute of element.attributes) {
-        expect(attribute.value).not.toContain(WITH_KEY.visionApiKey)
-      }
-    }
-    expect(container.innerHTML).not.toContain(WITH_KEY.visionApiKey)
-  })
-
-  it('キーを消すとブラウザ内の OCR に戻る', async () => {
-    renderWithProviders(<Settings />, { settings: WITH_KEY })
+  it('エンジンを選ぶと、その場で保存され次の読み取りから使われる', async () => {
+    renderWithProviders(<Settings />, { settings: TEST_SETTINGS })
     const user = userEvent.setup()
 
-    await user.click(screen.getByRole('button', { name: 'キーを消す' }))
+    await user.click(screen.getByRole('radio', { name: /Tesseract\.js（軽量）/ }))
 
-    await waitFor(() => expect(loadSettings()?.visionApiKey).toBe(''))
-    // トークンやリポジトリは消さない
-    expect(loadSettings()?.token).toBe(WITH_KEY.token)
-    expect(screen.getByLabelText('Cloud Vision の API キー')).toBeInTheDocument()
+    await waitFor(() => expect(loadSettings()?.ocrEngine).toBe('tesseract'))
+    // リポジトリ・トークンは巻き添えで変わらない
+    expect(loadSettings()?.token).toBe(TEST_SETTINGS.token)
   })
 
-  it('設定の消去でキーも消える', async () => {
-    renderWithProviders(<Settings />, { settings: WITH_KEY })
+  it('認識テキストの重ね表示を OFF にできる', async () => {
+    renderWithProviders(<Settings />, { settings: TEST_SETTINGS })
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('checkbox', { name: /認識テキストを画像上に表示/ }))
+
+    await waitFor(() => expect(loadSettings()?.showOcrText).toBe(false))
+  })
+
+  it('設定を保存する前でも OCR エンジンを選べ、最初の保存で一緒に残る', async () => {
+    // 初回の利用者はここへ直接来る。保存済みの設定が無くても操作できないといけない
+    renderWithProviders(<Settings />)
+    const user = await fillForm('sample-user/namecard-data', 'ghp_dummy')
+
+    await user.click(screen.getByRole('radio', { name: /Tesseract\.js（軽量）/ }))
+    expect(screen.getByRole('radio', { name: /Tesseract\.js（軽量）/ })).toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(loadSettings()?.ocrEngine).toBe('tesseract'))
+  })
+
+  it('設定の消去で OCR の設定も消える', async () => {
+    renderWithProviders(<Settings />, { settings: { ...TEST_SETTINGS, ocrEngine: 'tesseract' } })
     const user = userEvent.setup()
 
     await user.click(screen.getByRole('button', { name: '設定を消去' }))

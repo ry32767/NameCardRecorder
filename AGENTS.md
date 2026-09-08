@@ -17,7 +17,7 @@
 |---|---|
 | フロント | React 18 + TypeScript + Vite + Tailwind CSS |
 | ルーティング | React Router (HashRouter — GitHub Pages のため) |
-| OCR | Tesseract.js (`jpn`+`eng`)、Web Worker で実行 |
+| OCR | PaddleOCR（PP-OCRv5 日本語モデル / ONNX Runtime Web、`@paddleocr/paddleocr-js`）を既定に、Tesseract.js (`jpn`+`eng`) を選択肢として併存。どちらも Web Worker で実行し、**画像は端末から出さない** |
 | データ | GitHub REST API（別 private リポジトリの Issues + Contents） |
 | ローカルキャッシュ | IndexedDB（`idb`） |
 | 認証 | Fine-grained PAT を localStorage に保存 |
@@ -54,7 +54,8 @@ npm run preview      # ビルド結果の確認
 
 - テスト / Lint / 型 / ビルドにエラーがある状態で「完了」と言わない。
 - 手動確認が必要な受け入れ条件（カメラ、実機での見え方、実際の名刺での OCR）は、**何をどう確認したかを一言報告する**。確認していないなら「未確認」と正直に書く。
-- テストの無い受け入れ条件は、可能なら先にテストを書く。特に **OCR の項目抽出 (`src/lib/ocr/parser`) と Issue 本文の serialize/parse (`src/lib/card/`) は必ずユニットテストを持たせる**（ここが壊れるとデータが静かに壊れる）。表裏の OCR テキストの読み分けと、旧形式を読む後方互換の経路もテストで押さえること。
+- テストの無い受け入れ条件は、可能なら先にテストを書く。特に **OCR の項目抽出 (`src/lib/ocr/parser`)、OCR の戻り値の変換 (`src/lib/ocr/paddleResult`)、Issue 本文の serialize/parse (`src/lib/card/`) は必ずユニットテストを持たせる**（ここが壊れるとデータが静かに壊れる）。
+  **OCR エンジンの SDK を import するファイル (`paddle.ts` / `tesseract.ts`) はテストから読まない。** ONNX Runtime と OpenCV が jsdom に降ってきて回らなくなるので、テスト対象の純粋な処理は SDK を import しない側（`paddleResult.ts`）に置く。表裏の OCR テキストの読み分けと、旧形式を読む後方互換の経路もテストで押さえること。
 - **parser のテストは、整形済みのきれいなテキストだけで書かない。** Tesseract は日本語を `株 式 会 社 サ ンプ ル` のように文字単位で空けて返す。実際の出力の形でも通ることを必ず 1 ケース以上入れる（これを見落として抽出が全滅していたことがある）。
 - 仕様の不備で満たせないときは `docs/spec.md` の「未決定事項」に追記して相談する。
 

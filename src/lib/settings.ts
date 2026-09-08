@@ -1,4 +1,5 @@
 import type { RepoRef } from './github/types'
+import type { OcrEngine } from './ocr/engine'
 
 const STORAGE_KEY = 'namecard.settings.v1'
 
@@ -7,10 +8,19 @@ export interface Settings {
   repository: string
   token: string
   /**
-   * Google Cloud Vision の API キー。空なら OCR はブラウザ内の Tesseract を使う。
-   * **入っている場合だけ名刺画像が Google に送られる**（docs/architecture.md のプライバシー節）。
+   * どの OCR で読むか。どちらもブラウザ内で完結し、**画像は端末から出ない**
+   * （docs/architecture.md のプライバシー前提）。
    */
-  visionApiKey: string
+  ocrEngine: OcrEngine
+  /** 読み取った文字を画像の上に重ねて表示するか。OCR 自体の実行には影響しない */
+  showOcrText: boolean
+}
+
+/** 既定の OCR。PaddleOCR の方が日本語の精度が高い（docs/architecture.md の設計判断） */
+export const DEFAULT_OCR_ENGINE: OcrEngine = 'paddle'
+
+function isOcrEngine(value: unknown): value is OcrEngine {
+  return value === 'paddle' || value === 'tesseract'
 }
 
 export const REPOSITORY_FORMAT_MESSAGE = 'owner/repo の形式で入力してください'
@@ -42,10 +52,23 @@ export function loadSettings(): Settings | null {
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return null
-    const { repository, token, visionApiKey } = parsed as Partial<Settings>
+    const stored = parsed as Partial<Settings> & { visionApiKey?: unknown }
+    const { repository, token } = stored
     if (typeof repository !== 'string' || typeof token !== 'string') return null
-    // visionApiKey は後から足したフィールド。無い保存済み設定もそのまま読めるようにする
-    return { repository, token, visionApiKey: typeof visionApiKey === 'string' ? visionApiKey : '' }
+
+    // ocrEngine / showOcrText は後から足したフィールド。無い保存済み設定もそのまま読めるようにする
+    const settings: Settings = {
+      repository,
+      token,
+      ocrEngine: isOcrEngine(stored.ocrEngine) ? stored.ocrEngine : DEFAULT_OCR_ENGINE,
+      showOcrText: typeof stored.showOcrText === 'boolean' ? stored.showOcrText : true,
+    }
+
+    // Cloud Vision をやめたので、以前保存された API キーはこの端末から消す。
+    // 使わないキーを localStorage に置き続けない（消すには読んだここで書き戻すしかない）
+    if ('visionApiKey' in stored) saveSettings(settings)
+
+    return settings
   } catch {
     // 壊れた値が入っていても落とさず「未設定」として扱う
     return null
@@ -71,11 +94,18 @@ export function maskToken(token: string): string {
   return `${visible}${'*'.repeat(8)}`
 }
 
-export function isSettingsComplete(settings: Settings | null): settings is Settings {
-  return settings !== null && isValidRepository(settings.repository) && settings.token.length > 0
+/**
+ * 設定の変更で、ローカルキャッシュを捨てる必要があるか。
+ *
+ * キャッシュは「リポジトリ + トークンの持ち主」単位（docs/architecture.md）。
+ * **OCR の設定を変えただけで捨ててはいけない** — 重ね表示の ON/OFF のような軽い操作で
+ * 一覧のキャッシュと最終同期時刻まで消えると、次の起動で全件を取り直すことになる。
+ */
+export function needsCacheReset(previous: Settings | null, next: Settings): boolean {
+  if (!previous) return false
+  return previous.repository !== next.repository || previous.token !== next.token
 }
 
-/** OCR に Cloud Vision を使うか。キーが入っているかどうかだけで決まる */
-export function usesCloudVision(settings: Settings | null): boolean {
-  return Boolean(settings?.visionApiKey)
+export function isSettingsComplete(settings: Settings | null): settings is Settings {
+  return settings !== null && isValidRepository(settings.repository) && settings.token.length > 0
 }

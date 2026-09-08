@@ -5,6 +5,7 @@ import { CARD_SIDES, SIDE_LABELS, otherSide } from '../lib/cardSide'
 import type { OverlayLine } from '../lib/ocr/overlay'
 import type { CardSide } from '../lib/cardSide'
 import type { PreparedImage } from '../lib/ocr/image'
+import type { OcrPhase } from '../lib/ocr/types'
 
 interface ImagePickerProps {
   images: Record<CardSide, PreparedImage | null>
@@ -16,6 +17,11 @@ interface ImagePickerProps {
   /** 読み取り中の面。どちらも読んでいなければ null */
   readingSide: CardSide | null
   progress: number
+  /** いま何をしているか。モデルの取得と認識で文言を変える */
+  phase: OcrPhase
+  /** 読み取った文字を画像に重ねるか */
+  showOcrText: boolean
+  onToggleOcrText: () => void
   onFile: (side: CardSide, file: File | undefined) => Promise<void>
   onClear: (side: CardSide) => void
   onCopy: (text: string) => void
@@ -32,6 +38,9 @@ export function ImagePicker({
   onFlip,
   readingSide,
   progress,
+  phase,
+  showOcrText,
+  onToggleOcrText,
   onFile,
   onClear,
   onCopy,
@@ -43,6 +52,7 @@ export function ImagePicker({
   const image = images[side]
   const reading = readingSide !== null
   const readingThis = readingSide === side
+  const hasOcrText = overlays[side].length > 0
 
   return (
     <section className="rounded-card border border-rule bg-card p-4 shadow-card sm:p-6">
@@ -66,6 +76,16 @@ export function ImagePicker({
           : '裏の文字はフォームには入れず、あとで見返せるように名刺の記録に残します。'}
       </p>
 
+      {/* 読み取り結果は捨てないので、OFF → ON は読み直さずに戻る（spec 9） */}
+      {hasOcrText ? (
+        <div className="mt-3 flex items-center gap-3">
+          <span className="text-meta font-bold text-ink-soft">認識テキスト</span>
+          <Button onClick={onToggleOcrText} aria-pressed={showOcrText}>
+            {showOcrText ? '重ねて表示: ON' : '重ねて表示: OFF'}
+          </Button>
+        </div>
+      ) : null}
+
       {/* 画像そのものを押すと裏返る（文字の上はコピーが優先）。
           読み取り中に裏返すと進捗が見えなくなるので、ボタン側と揃えて止める */}
       <div
@@ -80,12 +100,14 @@ export function ImagePicker({
               alt={`選択した名刺の画像（${label}）`}
               className="block w-full object-contain"
             />
-            <OcrOverlay
-              lines={overlays[side]}
-              width={image.width}
-              height={image.height}
-              onCopy={onCopy}
-            />
+            {showOcrText ? (
+              <OcrOverlay
+                lines={overlays[side]}
+                width={image.width}
+                height={image.height}
+                onCopy={onCopy}
+              />
+            ) : null}
           </>
         ) : (
           <div className="flex aspect-meishi items-center justify-center bg-paper text-meta text-ink-faint">
@@ -97,7 +119,9 @@ export function ImagePicker({
       {readingThis ? (
         <div className="mt-3">
           <div className="flex items-center justify-between text-meta text-ink-soft">
-            <span>{label}を読み取っています…</span>
+            <span>
+              {phase === 'model' ? 'OCR モデルを読み込んでいます…' : `${label}を読み取っています…`}
+            </span>
             <span className="font-mono">{progress}%</span>
           </div>
           <div
@@ -106,6 +130,7 @@ export function ImagePicker({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-label={`${label}の OCR の進捗`}
+            aria-valuetext={phase === 'model' ? 'OCR モデルを読み込み中' : undefined}
             className="mt-1 h-2 w-full overflow-hidden rounded-control bg-paper"
           >
             <div className="h-full bg-indigo transition-[width]" style={{ width: `${progress}%` }} />

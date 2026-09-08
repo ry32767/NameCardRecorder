@@ -7,6 +7,7 @@ import { TEST_SETTINGS, renderWithProviders } from '../test/render'
 import { NewCard } from './NewCard'
 import { todayIso } from '../lib/card/validate'
 import { clearBranchCache } from '../lib/github/createCard'
+import type { OcrProgress } from '../lib/ocr/types'
 
 // jsdom には canvas も createImageBitmap も無いので、画像の前処理だけ差し替える。
 // ファイル種別の判定（画像以外を弾く）は本物をそのまま使い、受け入れ条件を骨抜きにしない。
@@ -316,17 +317,18 @@ describe('登録画面 / OCR 実行中', () => {
     const pending = new Promise<{ text: string; lines: StubLine[] }>((r) => {
       resolve = r
     })
-    let report: ((p: { progress: number; status: string }) => void) | undefined
+    let report: ((p: OcrProgress) => void) | undefined
     return {
       provider: {
-        recognize: (_image: Blob, onProgress?: (p: { progress: number; status: string }) => void) => {
+        recognize: (_image: Blob, onProgress?: (p: OcrProgress) => void) => {
           report = onProgress
           return pending
         },
         terminate: () => Promise.resolve(),
       },
       finish: resolve,
-      progress: (value: number) => report?.({ progress: value, status: 'recognizing text' }),
+      progress: (value: number) =>
+        report?.({ progress: value, status: 'recognizing text', phase: 'recognize' }),
     }
   }
 
@@ -549,7 +551,8 @@ describe('登録画面 / 読み取った文字の重ね表示', () => {
     await user.click(screen.getByRole('button', { name: '株式会社サンプル をコピー' }))
 
     expect(await navigator.clipboard.readText()).toBe('株式会社サンプル')
-    expect(screen.getByText('コピーしました')).toBeInTheDocument()
+    // 何をコピーしたかも知らせる（spec 8.2）
+    expect(screen.getByText('コピーしました「株式会社サンプル」')).toBeInTheDocument()
   })
 
   it('文字を押しても裏返らない（コピーが優先される）', async () => {
@@ -569,80 +572,86 @@ describe('登録画面 / 読み取った文字の重ね表示', () => {
   })
 })
 
-describe('登録画面 / Cloud Vision', () => {
-  const VISION = 'https://vision.googleapis.com/v1/images:annotate'
+describe('登録画面 / PaddleOCR が読めなかったとき', () => {
+  const LINES = [{ text: '株式会社サンプル', bbox: { x0: 60, y0: 80, x1: 500, y1: 130 } }]
 
-  function annotation() {
-    return {
-      text: '株式会社サンプル',
-      pages: [
-        {
-          blocks: [
-            {
-              paragraphs: [
-                {
-                  words: [
-                    {
-                      boundingBox: {
-                        vertices: [
-                          { x: 60, y: 80 },
-                          { x: 500, y: 80 },
-                          { x: 500, y: 130 },
-                          { x: 60, y: 130 },
-                        ],
-                      },
-                      symbols: [...'株式会社サンプル'].map((text, index) => ({
-                        text,
-                        ...(index === 7
-                          ? { property: { detectedBreak: { type: 'LINE_BREAK' } } }
-                          : {}),
-                      })),
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
+  it('モデルを取れなければ理由を出し、軽い方のエンジンで読み直せる', async () => {
+    const user = userEvent.setup()
+    let call = 0
+    const provider = {
+      recognize: () => {
+        call += 1
+        if (call === 1) {
+          // PaddleOCR のモデル取得が落ちた状態を作る
+          const error = new Error('PaddleOCR の読み込みに失敗しました')
+          error.name = 'PaddleOcrError'
+          return Promise.reject(error)
+        }
+        return Promise.resolve({ text: '株式会社サンプル', lines: LINES })
+      },
+      terminate: () => Promise.resolve(),
     }
-  }
-
-  it('API キーが設定されていれば Cloud Vision で読み、結果をフォームに入れる', async () => {
-    let called = 0
-    server.use(
-      http.post(VISION, () => {
-        called += 1
-        return HttpResponse.json({ responses: [{ fullTextAnnotation: annotation() }] })
-      }),
-    )
 
     clearBranchCache()
-    // ocrProvider を渡さない＝設定からエンジンを選ぶ本番の経路を通す
-    renderWithProviders(<NewCard onCreated={vi.fn()} />, {
-      settings: { ...TEST_SETTINGS, visionApiKey: 'test-key' },
+    renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={provider} />, {
+      settings: TEST_SETTINGS,
     })
     fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
       target: { files: [new File(['fake'], 'card.jpg', { type: 'image/jpeg' })] },
     })
+
+    expect(await screen.findByText(/PaddleOCR の読み込みに失敗しました/)).toBeInTheDocument()
+    // 読めなくても手入力での登録は塞がない
+    expect(screen.getByRole('button', { name: 'この内容で登録' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: /Tesseract.*で読み直す/ }))
 
     await waitFor(() => expect(screen.getByLabelText('会社名')).toHaveValue('株式会社サンプル'))
-    expect(called).toBe(1)
   })
+})
 
-  it('キーが拒否されたら理由を見せ、手入力で登録できる状態にする', async () => {
-    server.use(http.post(VISION, () => HttpResponse.json({ error: {} }, { status: 403 })))
+describe('登録画面 / 認識テキストの重ね表示', () => {
+  const LINES = [{ text: '株式会社サンプル', bbox: { x0: 60, y0: 80, x1: 500, y1: 130 } }]
+
+  async function readFrontWith(settings = TEST_SETTINGS) {
+    let calls = 0
+    const provider = {
+      recognize: () => {
+        calls += 1
+        return Promise.resolve({ text: '株式会社サンプル', lines: LINES })
+      },
+      terminate: () => Promise.resolve(),
+    }
 
     clearBranchCache()
-    renderWithProviders(<NewCard onCreated={vi.fn()} />, {
-      settings: { ...TEST_SETTINGS, visionApiKey: 'test-key' },
-    })
+    renderWithProviders(<NewCard onCreated={vi.fn()} ocrProvider={provider} />, { settings })
     fireEvent.change(screen.getByLabelText('表の画像ファイルを選択'), {
       target: { files: [new File(['fake'], 'card.jpg', { type: 'image/jpeg' })] },
     })
+    // 重ね表示が OFF のときは押せる文字が出ないので、フォームに入ったことで完了を見る
+    await waitFor(() => expect(screen.getByLabelText('会社名')).toHaveValue('株式会社サンプル'))
+    return { recognizeCalls: () => calls }
+  }
 
-    expect(await screen.findByText(/Cloud Vision に拒否されました/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'この内容で登録' })).toBeEnabled()
+  it('OFF にすると画像だけになり、ON に戻しても読み直さない', async () => {
+    const user = userEvent.setup()
+    const { recognizeCalls } = await readFrontWith()
+
+    await user.click(screen.getByRole('button', { name: '重ねて表示: ON' }))
+    expect(screen.queryByRole('button', { name: '株式会社サンプル をコピー' })).toBeNull()
+    // 表示を止めただけで、読み取り結果はフォームに残っている
+    expect(screen.getByLabelText('会社名')).toHaveValue('株式会社サンプル')
+
+    await user.click(screen.getByRole('button', { name: '重ねて表示: OFF' }))
+    expect(screen.getByRole('button', { name: '株式会社サンプル をコピー' })).toBeInTheDocument()
+    expect(recognizeCalls()).toBe(1)
+  })
+
+  it('設定で OFF にしてあれば、最初から重ねない', async () => {
+    await readFrontWith({ ...TEST_SETTINGS, showOcrText: false })
+
+    expect(screen.queryByRole('button', { name: '株式会社サンプル をコピー' })).toBeNull()
+    expect(screen.getByRole('button', { name: '重ねて表示: OFF' })).toBeInTheDocument()
   })
 })
 

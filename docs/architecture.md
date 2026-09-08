@@ -10,7 +10,7 @@
 flowchart LR
     subgraph Browser["ブラウザ (PC / スマホ)"]
         UI["React SPA"]
-        OCR["Tesseract.js (Web Worker)"]
+        OCR["OCR (PaddleOCR / Tesseract.js)<br/>Web Worker"]
         Cache[("IndexedDB キャッシュ")]
     end
     subgraph GH["GitHub"]
@@ -37,8 +37,9 @@ flowchart LR
 |---|---|---|---|
 | データの置き場 | 別 private リポジトリの Issues | 無料の Pages は public リポジトリ限定。個人情報を public に置けない | 同一リポジトリ（データが公開されてしまう）／GitHub Pro で private Pages（有料） |
 | 認証 | Fine-grained PAT を localStorage | サーバー不要で完全無料。個人利用なら十分 | OAuth App（トークン交換に別サーバーが必要）／Device Flow（GitHub のエンドポイントが CORS 非対応） |
-| OCR | 既定は Tesseract.js（ブラウザ内）。設定に API キーを入れたときだけ Google Cloud Vision | Tesseract は日本語の精度が実用に届かなかった（下記）。Vision は精度が出るが**画像を外部に送る**ので、使うかどうかを利用者が選べる形にした | Vision だけにする（キー無し・オフラインで OCR が一切使えなくなる）／Tesseract だけ（精度が上がらない） |
-| Vision の API キーの置き場 | localStorage に保存し、リクエストのクエリ（`?key=`）に載せる | Vision REST API がクエリでのキー受け渡ししか用意していない。バックエンドが無いので隠し場所も無い | サーバーを立てて中継（`docs/spec.md` のスコープ外）。**緩和策として、Google Cloud 側で HTTP リファラー制限と API の絞り込みを掛けてもらう**（設定画面に明記） |
+| OCR | 既定は PaddleOCR（PP-OCRv5 の日本語モデルを ONNX Runtime Web で実行）。設定で Tesseract.js に切り替えられる | Tesseract は日本語の精度が実用に届かなかった（文字ごとに空白が入る・語が崩れる）。PaddleOCR は**ブラウザ内のまま**精度が上がるので、画像を外に出さない前提を守ったまま置き換えられた | Google Cloud Vision（精度は出るが**画像を外部に送る**うえ、API キーの管理と課金を利用者に負わせる → 2026-09-09 に廃止）／Tesseract だけ（精度が上がらない） |
+| PaddleOCR の実行方法 | 公式の `@paddleocr/paddleocr-js`（Apache-2.0）を `worker: true` で使う | 検出（DB）→ 切り出し → 認識（CRNN）の前後処理まで含めて実装済み。ONNX Runtime Web と OpenCV.js を Worker の中で回すので、認識中もメインスレッドが止まらない | ONNX モデルを自前で叩く（前後処理を自作することになり、テスト対象が一気に増える） |
+| PaddleOCR のモデルの置き場 | 公式の配布元（`paddle-model-ecology.bj.bcebos.com`）から実行時に取得 | Tesseract の言語データと同じ扱い。リポジトリと Pages の成果物を 21MB 太らせない。**取りに行くのはモデルだけで、画像は送らない** | リポジトリに同梱（public リポジトリが 21MB 太る）／自前ホスティング（配信元を持たない） |
 | 名刺画像の見せ方 | 常に片面だけを出し、押すと裏返す（登録・詳細の両方） | 実物の名刺と同じ扱いで、狭い画面でも 1 枚を大きく見せられる | 表・裏を並べる（スマホでは 1 枚ずつが小さくなり、重ねた文字が押せない） |
 | 検索 | 全件を IndexedDB にキャッシュしてクライアント側で検索 | 数百件なら即応。オフラインでも一覧が見える。Search API のインデックス遅延を避けられる | GitHub Search API（新規 Issue が数秒〜数分ヒットしない・レート制限が別枠で厳しい） |
 | 画像の保存 | `cards/images/` にコミットして Issue から参照 | 後から実物を見返せる。Git に履歴が残る | Issue への添付（API から不可）／保存しない（照合できない） |
@@ -55,10 +56,13 @@ flowchart LR
 - PAT は localStorage に平文で入る。**アプリのリポジトリを public にする以上、XSS を持ち込まないことが唯一の防壁**になる。`dangerouslySetInnerHTML` と、信頼できない文字列を DOM に流す実装を禁止する。
 - トークンは `namecard-data` の Issues / Contents だけに絞る。漏れても被害範囲がそのリポジトリで止まる。
 - 名刺データは第三者の個人情報。データ用リポジトリを public にしない、ログに残さない。
-- **画像の外部送信は Cloud Vision を選んだときだけ**起きる。既定（キー未設定）では画像は端末から出ない。
-  キーを入れる画面で「画像が Google に送信される」ことと課金を明示し、いつでもキーを消して既定に戻せるようにする。
-- Vision の API キーはトークンと同じ扱い（マスク表示・DOM 属性に出さない・ログに出さない）。ただし
-  **リクエストのクエリには載る**ので、キーの制限は Google Cloud 側で掛けてもらう前提にする。
+- **名刺画像は端末から出ない。** OCR はどちらのエンジンでもブラウザ内で完結する。外に出ていくのは
+  読み取り用のモデル・言語データ・WASM を**取りに行く** GET だけで、画像を送る経路は無い
+  （2026-09-09 に Cloud Vision を廃止し、画像を外部へ送る経路そのものを無くした）。
+- ただしモデルの取得先（Baidu の配信 CDN・jsDelivr）には**利用者の IP と、いつ OCR を使ったかが伝わる**。
+  画像や名刺の中身は伝わらない。これは Tesseract の言語データ取得と同じ性質のもの。
+- 以前 Cloud Vision の API キーを保存していた端末では、設定を読んだ時点でキーを消す
+  （`loadSettings` の移行処理）。使わない鍵を localStorage に残さない。
 
 ## 3. データの持ち方
 
@@ -212,18 +216,15 @@ image: cards/images/2026/20260908-013a.jpg
 sequenceDiagram
     actor U as ユーザー
     participant A as アプリ
-    participant T as Tesseract.js
-    participant V as Cloud Vision
+    participant W as OCR Worker (ブラウザ内)
+    participant M as モデル配信 (CDN)
     participant G as GitHub API
     U->>A: 名刺を撮影 / 画像を選択 (表・裏 最大2枚・片面ずつ)
     A->>A: EXIF 回転補正・リサイズ (Tesseract 用にグレースケール化)
-    alt API キーあり
-        A->>V: images:annotate (画像を送信)
-        V-->>A: 生テキスト + 行ごとの座標
-    else 既定
-        A->>T: OCR 実行 (jpn+eng)
-        T-->>A: 生テキスト + 行ごとの座標
-    end
+    A->>W: OCR 実行 (画像は端末の中だけ)
+    W->>M: モデル / 言語データを取得 (初回のみ・画像は送らない)
+    M-->>W: モデル
+    W-->>A: 生テキスト + 行ごとの座標 (+ 信頼度)
     A->>A: 行の空白を整える → 項目抽出 (表のみ)
     A-->>U: 画像の上に読み取った行を重ね、確認フォームに候補を表示
     U->>A: 行を押してコピー / 内容を確認・修正
@@ -272,7 +273,7 @@ Tesseract の出力は行単位のテキスト。次の順で「確実なもの�
 > 実害は出ていないが、**スキームも `@` も無い裸のドメイン行**が来ると会社名に入りうる。順序に依存した
 > 危うさなので、判定を足すときはこの順序を崩さないこと。
 
-> 以下は Tesseract の出力を前提にした話。**Cloud Vision は文字ごとに空白を入れてこない**ので、
+> 以下は Tesseract の出力を前提にした話。**PaddleOCR は文字ごとに空白を入れてこない**ので、
 > 整形は素通りする（無害）。抽出ルール自体は両方のエンジンで共通に使う。
 
 #### 抽出の前に空白を詰める（`src/lib/ocr/lines.ts`）
@@ -306,34 +307,56 @@ Issue 本文の `ocrText` には**生テキストをそのまま**残す（後�
 **OCR の精度そのものが低いままではコピー元の文字列も使い物にならず、体験は変わらなかった**ため戻した。
 このとき同時に、上の「抽出の前に空白を詰める」を parser 側に入れている。
 **精度の問題は振り分けの有無ではなく OCR の出力品質**なので、次に手を入れるなら
-`OcrProvider` の差し替え（クラウド OCR / LLM）から検討すること。同じ反転を繰り返さない。
+`OcrProvider` の差し替えから検討すること。同じ反転を繰り返さない。
+→ 2026-09-09、この方針どおり既定を PaddleOCR に差し替えた（振り分けの仕組みはそのまま残している）。
 
-### Cloud Vision（任意・API キーがあるときだけ）
+### PaddleOCR（既定）
 
-> **リファラー制限はオリジンで書く。** ブラウザが付ける `Referer` は、既定の Referrer-Policy
-> （`strict-origin-when-cross-origin`）ではオリジンまで（`https://ry32767.github.io/`）で、
-> パスもハッシュも送られない。`https://ry32767.github.io/NameCardRecorder/*` のように
-> パスを含めて制限すると一致せず 403（`API_KEY_HTTP_REFERRER_BLOCKED`）になる。
+`@paddleocr/paddleocr-js` を `lang: 'japan'` / `ocrVersion: 'PP-OCRv5'` / `worker: true` で使う。実装は
+`src/lib/ocr/paddle.ts`、戻り値の変換は `src/lib/ocr/paddleResult.ts`。
 
-`https://vision.googleapis.com/v1/images:annotate?key=…` に `DOCUMENT_TEXT_DETECTION` で 1 回 POST する。
-実装は `src/lib/ocr/vision.ts`。
+- 送るのは**保存用のカラー画像**（`storageBlob`）。Tesseract 向けのグレースケール強調は
+  検出モデルには不要で、むしろ精度を落とす。
+- 戻り値は行ごとの `{ poly, text, score }`。`poly` は傾いた四角形なので、**全頂点の外接矩形**を
+  bbox にして重ね表示に使う。`score` は `confidence` として持ち越す。
+- 並びは**読み順（上から、同じ高さなら左から）に並べ直す**。項目抽出が行の順序を見るので、
+  検出順のままだとカードごとに結果が揺れる。
+- **PaddleOCR は文字ごとに空白を入れてこない**ので、`lines.ts` の詰め直しは素通りする（無害）。
+- SDK 本体（OpenCV を含む）とモデルはどちらも重いので、`import` は `paddle.ts` の中に閉じ込め、
+  `createOcrProvider` から動的に読む。**初期表示のバンドルには一切載らない**
+  （実測: エントリ 223KB。PaddleOCR 側の 10MB 超の chunk は、実際に読み取るまで取りに行かない）。
+- 失敗（モデルを取れない・Worker が立たない）は `PaddleOcrError` にして、画面に
+  「Tesseract.js で読み直す」を出す。読めなくても手入力での登録は塞がない。
 
-- 送るのは**保存用のカラー画像**（`storageBlob` を base64 化）。Tesseract 向けのグレースケール強調は
-  Vision には不要で、むしろ精度を落とす。`languageHints` に `ja` / `en` を渡す。
-- 返ってくるのは ページ → ブロック → 段落 → 単語 → 文字 の階層。段落をそのまま 1 行にすると
-  複数行が繋がるので、**文字ごとの `detectedBreak` が改行のところで行を切る**。
-  行の bbox は含まれる単語の頂点の外接矩形（頂点は軸平行とは限らず、値が 0 の座標はキーごと省略される）。
-- 失敗の本文には Google 自身の理由が入っている（`error.details[].reason`）。
-  `SERVICE_DISABLED` / `API_KEY_HTTP_REFERRER_BLOCKED` / `API_KEY_SERVICE_BLOCKED` / `BILLING_DISABLED` …
-  を**次に何をすればいいかが分かる日本語**に翻訳して画面に出す（`VISION_REASON_MESSAGES`）。
-  知らない理由なら**Google の原文をそのまま添える**。ここを潰すと切り分けができなくなる
-  （実際に 403 が出たとき、まとめた文言では原因に辿り着けなかった）。
-- 200 でも画像ごとに `responses[0].error` が入ることがあるので、そちらも同じ経路で見せる。
-- キーは例外メッセージにも URL ログにも入れない。
-- 失敗しても手入力で登録できる状態は保つ（OCR は補助であって必須ではない）。
+#### Vite の設定が要る理由
 
-`OcrProvider` の実装が 2 つになっただけなので、呼び出し側（`src/pages/NewCard.tsx`）は
-`src/lib/ocr/engine.ts` でどちらを使うか決めるだけでよい。
+SDK は自分の `dist` の中で `new Worker(new URL('./assets/…', import.meta.url))` を使う。
+Vite の依存の事前バンドルを通すとこの相対パスが壊れ、**dev でだけ Worker が起動しない**。
+そのため `vite.config.ts` で `optimizeDeps.exclude` に入れ、代わりに SDK が読む CJS の依存
+（`clipper-lib` / `js-yaml` / `@techstark/opencv-js` / `onnxruntime-web`）を `include` に入れている。
+どちらか片方だけでは動かないので、外すときは dev と build の両方で読み取りを通すこと。
+
+ONNX Runtime の WASM は SDK が自分のビルドと版を合わせて jsDelivr から取る（`wasmPaths` を渡さない）。
+こちらで版を固定すると SDK 更新時にずれるので、あえて指定していない。
+なお `npm run build` の成果物には、使われない ORT の WASM（約 28MB）も含まれる。
+利用者はこれを取得しないが、Pages に配る成果物は太る。
+
+### モデルと言語データの配信
+
+**どちらのエンジンも、データは CDN から取得しリポジトリに同梱しない。**
+
+| エンジン | 取得するもの | 大きさ | 取得先 |
+|---|---|---|---|
+| PaddleOCR | 検出モデル + 認識モデル（`.tar` の中の ONNX） | 約 4.8MB + 16.7MB | `paddle-model-ecology.bj.bcebos.com`（PaddlePaddle 公式） |
+| PaddleOCR | ONNX Runtime Web の WASM | 数 MB | jsDelivr |
+| Tesseract | `jpn`+`eng` の学習データ | 10–15MB | tesseract.js の既定 CDN |
+
+- **画像は外に出ない。**送るのではなく、モデルを取ってきてブラウザ内で処理する。
+- 2 回目以降はブラウザの HTTP キャッシュが効く（配信元が `Expires` を返す）。
+  Cache Storage への自前の保存はしていない（SDK が取得を内側で行うため）。
+- 初回だけモデルのダウンロード時間が乗る。画面には「OCR モデルを読み込んでいます…」を出して、
+  認識中と区別できるようにしている（`OcrProgress.phase`）。
+- **`docs/spec.md` の OCR 所要時間（PC 10 秒／スマホ 20 秒）は取得後の 2 回目以降を指す**。
 
 ### 読み取った文字を画像に重ねる
 
@@ -346,23 +369,29 @@ OCR が返す bbox は**OCR にかけた画像の実寸**。保存用と OCR 用
 - それでも印字が小さいと 44px には届かない（実測: 375px 幅で 20〜30px）。
   タップだけに頼らせないため、表の内容はフォームにも自動で入り、キーボードでも各行に到達できる。
 - SVG の中では `box-shadow` のフォーカスリングが出ないので、枠線を強めて代わりにしている（`src/index.css`）。
+- **重ね表示は ON/OFF できる**（画像の上の「重ねて表示」と、設定画面の「認識テキストを画像上に表示」）。
+  OFF にしても**読み取り結果は捨てない**ので、ON に戻すと読み直さずにその場で出る。
+  設定は `showOcrText` として localStorage に残る。
 
-### 言語データの配信（未決定事項の決定）
+### 設定（localStorage `namecard.settings.v1`）
 
-`jpn`+`eng` の学習データ（10–15MB）は **tesseract.js の既定どおり CDN から取得**し、リポジトリに同梱しない。
+| キー | 型 | 備考 |
+|---|---|---|
+| `repository` | string | `owner/repo` |
+| `token` | string | Fine-grained PAT |
+| `ocrEngine` | `'paddle' \| 'tesseract'` | 無ければ `paddle`。次に読み取る名刺から効く |
+| `showOcrText` | boolean | 無ければ `true` |
 
-- 同梱するとアプリのリポジトリと Pages の成果物が 15MB 太る。ブラウザにキャッシュされるので 2 回目以降は効かない。
-- **画像は外に出ない。**送るのではなく、辞書を取ってきてブラウザ内で処理する（プライバシー前提は保たれる）。
-- Tesseract 本体は動的 import にして初期表示のバンドルから外してある（`src/pages/NewCard.tsx`）。
-- 初回だけ辞書のダウンロード時間が乗る。**`docs/spec.md` の OCR 所要時間（PC 10 秒／スマホ 20 秒）は
-  辞書取得後の 2 回目以降を指す**ものとして扱う。
+後方互換: 知らないキー・欠けたキーは既定値で読む。**廃止した `visionApiKey` は、読んだ時点で
+書き戻して端末から消す**（`src/lib/settings.ts`）。
 
 ### 差し替え可能にしておく
 
 将来クラウド OCR や LLM に切り替えられるよう、`OcrProvider` インタフェース（`recognize(image): Promise<OcrResult>`）を切り、Tesseract 実装をその 1 つとして置く。呼び出し側はインタフェースにだけ依存する。
 
-実装済み: `src/lib/ocr/types.ts` に `OcrProvider`、`src/lib/ocr/tesseract.ts` に Tesseract 実装。
-`NewCard` は props で provider を差し替えられる。
+実装済み: `src/lib/ocr/types.ts` に `OcrProvider`、`src/lib/ocr/paddle.ts` と
+`src/lib/ocr/tesseract.ts` に 2 つの実装。`NewCard` は props で provider を差し替えられる
+（テストはこの口から差し替えるので、jsdom に ONNX Runtime も OpenCV も降ってこない）。
 
 ## 6. デプロイ
 
@@ -386,8 +415,8 @@ OCR が返す bbox は**OCR にかけた画像の実寸**。保存用と OCR 用
 | ラベルの組み立て | `src/lib/card/labels.ts` |
 | 保存前の検証 | `src/lib/card/validate.ts` |
 | OCR の項目抽出（辞書・ヒューリスティック） | `src/lib/ocr/parser.ts` / `dictionaries.ts` / `lines.ts` |
-| OCR エンジンの選択（Tesseract / Cloud Vision） | `src/lib/ocr/engine.ts` |
-| Cloud Vision の呼び出しと行の組み立て | `src/lib/ocr/vision.ts` |
+| OCR エンジンの選択（PaddleOCR / Tesseract） | `src/lib/ocr/engine.ts` |
+| PaddleOCR の実行 / 戻り値の変換（poly → bbox・読み順） | `src/lib/ocr/paddle.ts` / `paddleResult.ts` |
 | 読み取った行の画像への重ね表示とコピー | `src/components/OcrOverlay.tsx` / `src/lib/ocr/overlay.ts` / `src/lib/clipboard.ts` |
 | 名刺画像の表裏の切り替え表示（詳細画面） | `src/components/CardImages.tsx` |
 | 画像の前処理（EXIF・リサイズ・グレースケール） | `src/lib/ocr/image.ts` |

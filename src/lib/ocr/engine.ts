@@ -5,28 +5,26 @@ import type { Settings } from '../settings'
 /**
  * どの OCR で読むかの選択。
  *
- * 既定はブラウザ内の Tesseract（画像が外に出ない）。設定に Cloud Vision の
- * API キーが入っているときだけ Vision を使う（docs/architecture.md の 5. OCR パイプライン）。
+ * **どちらもブラウザ内で動き、名刺画像は端末から出ない。**
+ * 既定は PaddleOCR（PP-OCRv5 の日本語モデル）。Tesseract は、モデルを取れないときや
+ * 端末が非力なときのための軽い方の選択肢として残す（docs/architecture.md の 5. OCR パイプライン）。
  */
-export type OcrEngine = 'tesseract' | 'vision'
+export type OcrEngine = 'paddle' | 'tesseract'
 
 export const ENGINE_LABELS: Record<OcrEngine, string> = {
-  tesseract: 'この端末（Tesseract）',
-  vision: 'Cloud Vision',
+  paddle: 'PaddleOCR（推奨）',
+  tesseract: 'Tesseract.js（軽量）',
 }
 
 export function engineFor(settings: Settings | null): OcrEngine {
-  return settings?.visionApiKey ? 'vision' : 'tesseract'
+  return settings?.ocrEngine ?? 'paddle'
 }
 
 /** 重いので、実際に読み取るときまで読み込まない（初期表示を軽く保つ） */
-export async function createOcrProvider(
-  engine: OcrEngine,
-  settings: Settings | null,
-): Promise<OcrProvider> {
-  if (engine === 'vision' && settings?.visionApiKey) {
-    const { GoogleVisionOcrProvider } = await import('./vision')
-    return new GoogleVisionOcrProvider(settings.visionApiKey)
+export async function createOcrProvider(engine: OcrEngine): Promise<OcrProvider> {
+  if (engine === 'paddle') {
+    const { PaddleOcrProvider } = await import('./paddle')
+    return new PaddleOcrProvider()
   }
   const { TesseractOcrProvider } = await import('./tesseract')
   return new TesseractOcrProvider()
@@ -35,8 +33,9 @@ export async function createOcrProvider(
 /**
  * エンジンに渡す画像を選ぶ。
  * Tesseract は低コントラストに弱いのでグレースケール強調した方を、
- * Vision は前処理なしのカラーの方が精度が出るので保存用の方を渡す。
+ * PaddleOCR は前処理なしのカラーの方が精度が出る（検出モデルが色つきの実画像で学習されている）
+ * ので保存用の方を渡す。
  */
 export function ocrInputBlob(engine: OcrEngine, image: PreparedImage): Blob {
-  return engine === 'vision' ? image.storageBlob : image.ocrBlob
+  return engine === 'paddle' ? image.storageBlob : image.ocrBlob
 }
